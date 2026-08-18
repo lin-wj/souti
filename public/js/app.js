@@ -58,5 +58,16 @@ app.init().then(() => {
   setBootStatus('CAMERA READY', '#0f0');
 }).catch(err => {
   console.error('[BOOT] app.init() rejected:', err);
-  setBootStatus('CAMERA FAIL: ' + err.name, '#f00');
+  setBootStatus('INIT ERROR: ' + err.name, '#f00');
 });
+
+// 每秒输出当前状态，方便手机端诊断
+setInterval(() => {
+  const stateEl = document.getElementById('state-display');
+  if (stateEl) {
+    const text = stateEl.textContent;
+    if (text && text !== 'INITIALIZING') {
+      setBootStatus('STATE: ' + text, '#0af');
+    }
+  }
+}, 2000);
