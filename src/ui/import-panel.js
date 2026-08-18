@@ -167,3 +167,5 @@ async function handleClear() {
   const el = document.getElementById('import-stats');
   if (el) el.style.display = 'none';
 }
+
+export default { init, togglePanel };
