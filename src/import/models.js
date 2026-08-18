@@ -22,24 +22,24 @@ export const QuestionType = Object.freeze({
  * @returns {QuestionType}
  */
 export function inferType(answer, hasOptions) {
-  const ans = String(answer || '').trim();
+  const ans = String(answer || '').trim().toUpperCase();
 
   // 判断题
   if (ans === '正确' || ans === '错误') {
     return QuestionType.TRUE_FALSE;
   }
 
-  // 纯字母组合（A/B/C/D/AB/ABC/ABCD 等）
+  // 纯字母组合：单字母=单选，多字母=多选
   if (/^[A-G]+$/.test(ans)) {
-    return hasOptions ? QuestionType.MULTIPLE_CHOICE : QuestionType.SHORT_ANSWER;
+    if (!hasOptions) return QuestionType.SHORT_ANSWER;
+    return ans.length === 1 ? QuestionType.SINGLE_CHOICE : QuestionType.MULTIPLE_CHOICE;
   }
 
-  // 其他文本答案（可能是简答题）
+  // 其他文本答案
   if (!hasOptions) {
     return QuestionType.SHORT_ANSWER;
   }
 
-  // 有选项但答案不是字母 → 可能判断题的特殊格式或简答题
   return QuestionType.SHORT_ANSWER;
 }
 

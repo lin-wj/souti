@@ -85,9 +85,12 @@ function startDetectionLoop(videoEl) {
 
     if (displaySize) {
       const rect = Detection.computeRect(videoSize, displaySize);
-      const ready = Detection.isReadyToCapture(videoEl, rect);
 
+      // 先处理当前帧，更新 lastFrameData 和稳定状态
       Detection.processFrame(videoEl, rect);
+
+      // 再基于已处理的帧判断是否可触发识别
+      const ready = Detection.isReadyToCapture(videoEl, rect);
 
       if (ready) {
         triggerCapture(videoEl, rect);
@@ -130,6 +133,7 @@ async function triggerCapture(videoEl, rect) {
   try {
     const { base64 } = await Processing.extractAndCompress(videoEl, rect);
 
+    // TODO Phase 2D: 替换为 OCR + 本地题库匹配
     setState(State.PROCESSING);
 
     abortController = new AbortController();
@@ -141,9 +145,11 @@ async function triggerCapture(videoEl, rect) {
       return;
     }
 
-    // 记录 hash 用于去重
-    const hash = Detection.computePerceptualHash(null, rect.width, rect.height);
+    // 记录 hash 用于去重（从当前视频帧提取）
+    const frameData = Detection.captureFrameForHash(videoEl, rect);
+    const hash = frameData ? Detection.computePerceptualHash(frameData, rect.width, rect.height) : null;
     Detection.markRecognized(hash);
+    Detection.resetDetection(); // 重置稳定计时器，防止下一题过快触发
 
     setState(State.SHOWING_RESULT, { result });
     UI.showResult(result);

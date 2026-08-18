@@ -10,7 +10,8 @@
  */
 
 import config from '../config.js';
-import State, { getState } from '../state/machine.js';
+import State from '../state/machine.js';
+import { getState } from '../state/store.js';
 
 // ── 内部状态 ──────────────────────────────────────────────
 let lastFrameData = null;   // Uint8ClampedArray
@@ -271,15 +272,22 @@ export function processFrame(video, rect) {
 
 /**
  * 检查是否满足触发识别的条件。
+ * 必须在 processFrame() 之后调用（依赖已更新的 lastFrameData）。
  */
 export function isReadyToCapture(video, rect) {
   const now = Date.now();
+  // 防止在识别过程中重复触发
+  const state = getState();
+  if (state === State.PROCESSING || state === State.CAPTURING || state === State.MATCHING) {
+    return false;
+  }
+  // 冷却期内不触发
+  if (now - lastRecognitionTime < config.COOLDOWN_TIME) {
+    return false;
+  }
   const content = hasContent(lastFrameData, rect.width, rect.height);
-  const change = lastFrameData ? computeFrameDifference(null, lastFrameData, rect.width, rect.height) : 0;
-  const inCooldown = now - lastRecognitionTime < config.COOLDOWN_TIME;
   const isStable = stableStart && now - stableStart >= config.STABLE_DURATION;
-
-  return content && !inCooldown && isStable;
+  return content && isStable;
 }
 
 /**
@@ -348,6 +356,7 @@ export default {
   hashSimilarity,
   computeRect,
   isReadyToCapture,
+  captureFrameForHash: captureFrame, // 供外部获取当前帧像素数据用于 hash
   resetDetection,
   markRecognized,
   onDetectContent,
