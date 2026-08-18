@@ -19,6 +19,8 @@ import UI from './ui/index.js';
 import State from './state/machine.js';
 import { setState, getDebugInfo } from './state/store.js';
 
+console.log('[APP] src/app.js loaded');
+
 // ── 运行标志 ──────────────────────────────────────────────
 let running = false;
 let frameTimer = null;
@@ -27,26 +29,38 @@ let abortController = null;
 let ocrTimer = null;       // OCR 调试独立定时器
 let lastOCRTimer = 0;      // 上次 OCR 触发时间（去抖）
 
+console.log('[APP] navigator.mediaDevices:', typeof navigator.mediaDevices);
+console.log('[APP] getUserMedia:', typeof navigator.mediaDevices?.getUserMedia);
+console.log('[APP] location.protocol:', location.protocol);
+console.log('[APP] location.hostname:', location.hostname);
+
 // ── 初始化 ────────────────────────────────────────────────
 export async function init() {
+  console.log('[APP] init start');
   UI.init();
+  console.log('[APP] UI.init() done, calling startCameraLoop()');
   await startCameraLoop();
+  console.log('[APP] init complete');
 }
 
 /**
  * 启动摄像头并进入主循环。
  */
 async function startCameraLoop() {
-  if (running) return;
+  console.log('[CAMERA] startCameraLoop start, running=', running);
+  if (running) { console.log('[CAMERA] already running, skip'); return; }
   running = true;
 
   setState(State.INITIALIZING);
 
   try {
+    console.log('[CAMERA] calling Camera.startCamera()');
     await Camera.startCamera();
     const { stream, videoEl } = Camera;
+    console.log('[CAMERA] startCamera() resolved, stream=', !!stream, 'videoEl=', !!videoEl);
     UI.setVideoElement(videoEl);
     setState(State.CAMERA_READY);
+    console.log('[CAMERA] setState(CAMERA_READY) done');
 
     // 监听摄像头错误
     Camera.onCameraError((err, message) => {
@@ -62,7 +76,8 @@ async function startCameraLoop() {
     // 监听窗口大小变化以重绘识别框
     setupResizeObserver(videoEl);
   } catch (err) {
-    console.error('[App] Failed to start camera:', err);
+    console.error('[CAMERA] startCameraLoop error:', err.name, err.message);
+    console.error('[CAMERA] full error:', err);
     setState(State.CAMERA_ERROR, { error: err.message });
     running = false;
   }

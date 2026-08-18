@@ -43,13 +43,27 @@ export function onStreamReady(fn) {
  * 失败时会抛出 Error，并通过 onErrorCallbacks 通知。
  */
 export async function startCamera() {
+  console.log('[CAMERA] startCamera start');
   if (stream) {
+    console.log('[CAMERA] stopping existing stream');
     stopCamera();
   }
 
+  console.log('[CAMERA] before getUserMedia');
+  console.log('[CAMERA] mediaDevices exists:', !!navigator.mediaDevices);
+  console.log('[CAMERA] getUserMedia exists:', typeof navigator.mediaDevices?.getUserMedia);
+  console.log('[CAMERA] constraints:', JSON.stringify(DEFAULT_constraints));
+
   try {
     stream = await navigator.mediaDevices.getUserMedia(DEFAULT_constraints);
+    console.log('[CAMERA] getUserMedia success, stream=', !!stream);
+    console.log('[CAMERA] tracks:', stream.getTracks().map(t => `${t.label} (${t.kind})`));
   } catch (err) {
+    console.error('[CAMERA] getUserMedia error');
+    console.error('[CAMERA]  name:', err.name);
+    console.error('[CAMERA]  message:', err.message);
+    console.error('[CAMERA]  code:', err.code);
+    console.error('[CAMERA]  stack:', err.stack);
     const message = classifyCameraError(err);
     onErrorCallbacks.forEach((fn) => fn(err, message));
     throw err;
