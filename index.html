@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>AI 识题</title>
+  <link rel="stylesheet" href="/css/main.css" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+</head>
+<body>
+  <!-- 视频容器 -->
+  <div id="video-container">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay-canvas"></canvas>
+
+    <!-- 识别框提示文字 -->
+    <div class="frame-hint">
+      <span id="status-text">启动摄像头…</span>
+      <span id="status-subtext">请允许摄像头权限</span>
+    </div>
+  </div>
+
+  <!-- 识别结果面板 -->
+  <div id="result-container" class="result-container">
+    <div class="result-header">
+      <span id="result-subject" class="subject-tag"></span>
+      <span id="result-confidence" class="confidence"></span>
+    </div>
+    <div class="result-question" id="result-question"></div>
+    <div class="result-answer-section">
+      <span class="label">答案</span>
+      <div class="answer-value" id="result-answer"></div>
+    </div>
+    <details class="result-explanation">
+      <summary>点击查看详细解析</summary>
+      <div id="result-explanation"></div>
+    </details>
+    <div id="error-hint" class="error-hint"></div>
+  </div>
+
+  <!-- 调试面板 -->
+  <div id="debug-panel" class="debug-panel" style="display:none">
+    <div class="debug-title">调试信息</div>
+    <div id="state-display" class="debug-state"></div>
+    <div id="debug-content"></div>
+    <div id="fps-counter"></div>
+  </div>
+
+  <!-- 题库导入按钮（浮动） -->
+  <button id="import-trigger" class="import-trigger" title="导入题库">📚</button>
+
+  <!-- 调试模式开关 -->
+  <button id="debug-trigger" class="debug-trigger" title="切换调试模式">🔍</button>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

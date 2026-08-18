@@ -1,0 +1,30 @@
+import * as prettier from 'prettier';
+import * as parserHtml from 'prettier/parser-html';
+import * as parserCss from 'prettier/parser-css';
+import * as parserBabel from 'prettier/parser-babel';
+
+export default {
+  modules: {
+    baseUrl: '.',
+    paths: {
+      '#config': ['./src/config.js', 'esm'],
+      '#state/machine': ['./src/state/machine.js', 'esm'],
+      '#state/store': ['./src/state/store.js', 'esm'],
+      '#camera': ['./src/camera/index.js', 'esm'],
+      '#detection': ['./src/detection/index.js', 'esm'],
+      '#processing': ['./src/processing/index.js', 'esm'],
+      '#provider': ['./src/provider/index.js', 'esm'],
+      '#ui': ['./src/ui/index.js', 'esm'],
+      '#app': ['./src/app.js', 'esm'],
+    },
+  },
+  name: 'souti',
+  main: 'worker/index.js',
+  compatibility_date: '2024-11-01',
+  assets: [
+    { directory: '.', pattern: './**/*.html' },
+    { directory: '.', pattern: './**/*.css' },
+    { directory: '.', pattern: './**/*.json' },
+    { directory: '.', pattern: './**/*.png' },
+  ],
+};
