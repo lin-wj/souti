@@ -1,21 +1,33 @@
 /** [BOOT] public/js/app.js loaded */
 console.log('[BOOT] public/js/app.js loaded');
 
-// 可见诊断：页面加载后显示 BOOT OK
-(function showBoot() {
-  const el = document.createElement('div');
-  el.id = 'boot-diagnostic';
-  el.style.cssText = 'position:fixed;top:0;left:0;z-index:9999;background:#0f0;color:#000;padding:4px 12px;font-size:14px;font-weight:bold;font-family:monospace;';
-  el.textContent = 'BOOT OK';
-  document.body.appendChild(el);
-})();
+// 可见诊断：页面加载后显示状态
+let bootEl = null;
+function setBootStatus(text, color) {
+  if (!bootEl) {
+    bootEl = document.createElement('div');
+    bootEl.id = 'boot-diagnostic';
+    bootEl.style.cssText = 'position:fixed;top:0;left:0;z-index:9999;background:#0f0;color:#000;padding:4px 12px;font-size:14px;font-weight:bold;font-family:monospace;';
+    document.body.appendChild(bootEl);
+  }
+  bootEl.textContent = text;
+  bootEl.style.background = color || '#0f0';
+  console.log('[BOOT]', text);
+}
+setBootStatus('BOOT OK');
 
 import app from '../src/app.js';
 import ImportPanel from '../src/ui/import-panel.js';
 import Storage from '../src/db/storage.js';
 
 console.log('[BOOT] imports resolved, calling ImportPanel.init()');
-ImportPanel.init();
+try {
+  ImportPanel.init();
+  setBootStatus('IMPORT OK', '#0af');
+} catch(e) {
+  setBootStatus('IMPORT ERR: ' + e.message, '#f80');
+  console.error('[BOOT] ImportPanel.init() failed:', e);
+}
 
 const debugBtn = document.getElementById('debug-trigger');
 if (debugBtn) {
@@ -40,8 +52,11 @@ window.addEventListener('load', async () => {
 });
 
 console.log('[BOOT] calling app.init()');
-app.init().then(() => console.log('[BOOT] app.init() resolved')).catch(err => {
+setBootStatus('STARTING CAMERA...', '#ff0');
+app.init().then(() => {
+  console.log('[BOOT] app.init() resolved');
+  setBootStatus('CAMERA READY', '#0f0');
+}).catch(err => {
   console.error('[BOOT] app.init() rejected:', err);
-  const el = document.getElementById('boot-diagnostic');
-  if (el) { el.textContent = 'BOOT FAIL'; el.style.background = '#f00'; el.style.color = '#fff'; }
+  setBootStatus('CAMERA FAIL: ' + err.name, '#f00');
 });
