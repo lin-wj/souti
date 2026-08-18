@@ -168,4 +168,4 @@ async function handleClear() {
   if (el) el.style.display = 'none';
 }
 
-export default { init, togglePanel };
+export default { init };
