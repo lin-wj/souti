@@ -153,27 +153,30 @@ export function drawFrameOverlay(rect, videoSize, displaySize) {
   // 清空
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // 绘制遮罩（框外区域）
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+  // 绘制深色遮罩（框外区域），适度压暗以突出扫描区
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.70)';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // 擦除框内区域
+  // 擦除框内区域，恢复视频画面
   ctx.globalCompositeOperation = 'destination-out';
   ctx.fillRect(dx, dy, dw, dh);
   ctx.globalCompositeOperation = 'source-over';
 
-  // 绘制边框
-  ctx.strokeStyle = '#4ADE80';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(dx, dy, dw, dh);
+  // 在框内叠加淡淡的绿色提示底色
+  ctx.fillStyle = 'rgba(74, 222, 128, 0.06)';
+  ctx.fillRect(dx, dy, dw, dh);
 
-  // 角标装饰
-  const cornerLen = Math.min(24, dw / 4, dh / 4);
+  // 外边框 — 较粗的绿色实线
   ctx.strokeStyle = '#4ADE80';
   ctx.lineWidth = 3;
+  ctx.strokeRect(dx, dy, dw, dh);
+
+  // 四个角标（更粗更长，增强视觉识别度）
+  const cornerLen = Math.max(20, Math.min(48, dw / 5, dh / 3));
+  ctx.strokeStyle = '#4ADE80';
+  ctx.lineWidth = 4;
   ctx.lineCap = 'square';
 
-  // 四个角
   const corners = [
     [dx, dy], [dx + dw, dy],
     [dx, dy + dh], [dx + dw, dy + dh],
@@ -233,9 +236,10 @@ export function showError(message) {
 }
 
 // ── 更新调试 FPS ──────────────────────────────────────────
-export function updateDebugFPS(fps, change, hasContent, isStable) {
+export function updateDebugFPS(fps, change, hasContent, isStable, rect) {
   if (els.fpsCounter) {
-    els.fpsCounter.textContent = `FPS: ${fps} | 变化: ${(change * 100).toFixed(1)}% | 内容: ${hasContent} | 稳定: ${isStable}`;
+    const rectInfo = rect ? ` | 框:(${rect.x},${rect.y}) ${rect.width}×${rect.height}` : '';
+    els.fpsCounter.textContent = `FPS: ${fps} | 变化: ${(change * 100).toFixed(1)}% | 内容: ${hasContent} | 稳定: ${isStable}${rectInfo}`;
   }
 }
 

@@ -129,7 +129,7 @@ function startDetectionLoop(videoEl) {
             isStable: Detection['_lastIsStable'] ?? false,
           };
       if (debug) {
-        UI.updateDebugFPS(debug.fps, _lastChange.value, _lastHasContent.value, _lastIsStable.value);
+        UI.updateDebugFPS(debug.fps, _lastChange.value, _lastHasContent.value, _lastIsStable.value, rect);
       }
     }
 

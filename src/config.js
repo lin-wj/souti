@@ -24,10 +24,10 @@ export const config = {
   IMAGE_QUALITY: 0.85,
 
   /** 识别框在画面中的相对宽度（占总画面宽度的比例）。 */
-  FRAME_WIDTH_RATIO: 0.7,
+  FRAME_WIDTH_RATIO: 0.85,
 
   /** 识别框在画面中的相对高度（占画面高度的比例）。 */
-  FRAME_HEIGHT_RATIO: 0.5,
+  FRAME_HEIGHT_RATIO: 0.65,
 
   // ── AI 请求 ───────────────────────────────────────────────
   /** AI 请求超时（毫秒）。超过此时间视为超时。 */

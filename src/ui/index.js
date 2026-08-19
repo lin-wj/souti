@@ -33,6 +33,10 @@ function cacheElements() {
     debugContent: document.getElementById('debug-content'),
     fpsCounter: document.getElementById('fps-counter'),
     stateDisplay: document.getElementById('state-display'),
+    // OCR 调试
+    ocrDebug: document.getElementById('ocr-debug'),
+    ocrText: document.getElementById('ocr-text'),
+    ocrMeta: document.getElementById('ocr-meta'),
   };
 }
 
@@ -94,7 +98,9 @@ function renderState(state, debug) {
 
   // 调试面板
   if (els.debugPanel) {
-    els.debugPanel.style.display = document.body.classList.contains('debug-mode') ? 'block' : 'none';
+    const isDebug = document.body.classList.contains('debug-mode');
+    els.debugPanel.style.display = isDebug ? 'block' : 'none';
+    if (els.ocrDebug) els.ocrDebug.style.display = isDebug ? 'block' : 'none';
     if (debug) {
       els.stateDisplay.textContent = state;
       els.debugContent.innerHTML = formatDebugInfo(debug);
@@ -147,27 +153,30 @@ export function drawFrameOverlay(rect, videoSize, displaySize) {
   // 清空
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // 绘制遮罩（框外区域）
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+  // 绘制深色遮罩（框外区域），适度压暗以突出扫描区
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.70)';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // 擦除框内区域
+  // 擦除框内区域，恢复视频画面
   ctx.globalCompositeOperation = 'destination-out';
   ctx.fillRect(dx, dy, dw, dh);
   ctx.globalCompositeOperation = 'source-over';
 
-  // 绘制边框
-  ctx.strokeStyle = '#4ADE80';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(dx, dy, dw, dh);
+  // 在框内叠加淡淡的绿色提示底色
+  ctx.fillStyle = 'rgba(74, 222, 128, 0.06)';
+  ctx.fillRect(dx, dy, dw, dh);
 
-  // 角标装饰
-  const cornerLen = Math.min(24, dw / 4, dh / 4);
+  // 外边框 — 较粗的绿色实线
   ctx.strokeStyle = '#4ADE80';
   ctx.lineWidth = 3;
+  ctx.strokeRect(dx, dy, dw, dh);
+
+  // 四个角标（更粗更长，增强视觉识别度）
+  const cornerLen = Math.max(20, Math.min(48, dw / 5, dh / 3));
+  ctx.strokeStyle = '#4ADE80';
+  ctx.lineWidth = 4;
   ctx.lineCap = 'square';
 
-  // 四个角
   const corners = [
     [dx, dy], [dx + dw, dy],
     [dx, dy + dh], [dx + dw, dy + dh],
@@ -227,10 +236,31 @@ export function showError(message) {
 }
 
 // ── 更新调试 FPS ──────────────────────────────────────────
-export function updateDebugFPS(fps, change, hasContent, isStable) {
+export function updateDebugFPS(fps, change, hasContent, isStable, rect) {
   if (els.fpsCounter) {
-    els.fpsCounter.textContent = `FPS: ${fps} | 变化: ${(change * 100).toFixed(1)}% | 内容: ${hasContent} | 稳定: ${isStable}`;
+    const rectInfo = rect ? ` | 框:(${rect.x},${rect.y}) ${rect.width}×${rect.height}` : '';
+    els.fpsCounter.textContent = `FPS: ${fps} | 变化: ${(change * 100).toFixed(1)}% | 内容: ${hasContent} | 稳定: ${isStable}${rectInfo}`;
   }
+}
+
+// ── OCR 调试 ──────────────────────────────────────────────
+export function showOCRDebug(result) {
+  if (!els.ocrDebug) return;
+  if (!result || !result.text) {
+    els.ocrText.textContent = '(无识别结果)';
+    els.ocrMeta.textContent = '';
+    return;
+  }
+  els.ocrText.textContent = result.text || '(空)';
+  const parts = [];
+  if (result.elapsed != null) parts.push(`耗时 ${result.elapsed}ms`);
+  if (result.confidence != null) parts.push(`置信 ${result.confidence.toFixed(1)}%`);
+  if (result.error) parts.push('错误: ' + result.error);
+  els.ocrMeta.textContent = parts.join('  ');
+}
+
+export function hideOCRDebug() {
+  if (els.ocrDebug) els.ocrDebug.style.display = 'none';
 }
 
 export default {
@@ -241,4 +271,6 @@ export default {
   hideResult,
   showError,
   updateDebugFPS,
+  showOCRDebug,
+  hideOCRDebug,
 };
