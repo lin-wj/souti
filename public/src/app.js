@@ -93,44 +93,52 @@ function startDetectionLoop(videoEl) {
   const loop = () => {
     if (!running) return;
 
-    const videoSize = Camera.getVideoDimensions();
-    if (!videoSize) {
-      frameTimer = setTimeout(loop, config.FRAME_INTERVAL);
-      return;
-    }
-
-    // 获取 display 尺寸
-    const displayEl = document.getElementById('video-container');
-    const displaySize = displayEl
-      ? { width: displayEl.clientWidth, height: displayEl.clientHeight }
-      : null;
-
-    if (displaySize) {
-      const rect = Detection.computeRect(videoSize, displaySize);
-
-      // 先处理当前帧，更新 lastFrameData 和稳定状态
-      Detection.processFrame(videoEl, rect);
-
-      // 再基于已处理的帧判断是否可触发识别
-      const ready = Detection.isReadyToCapture(videoEl, rect);
-
-      if (ready) {
-        triggerCapture(videoEl, rect);
+    try {
+      const videoSize = Camera.getVideoDimensions();
+      if (!videoSize) {
+        frameTimer = setTimeout(loop, config.FRAME_INTERVAL);
+        return;
       }
 
-      // 调试信息
-      const info = getDebugInfo();
-      const debug = info.current === State.PROCESSING || info.current === State.SHOWING_RESULT
-        ? null
-        : {
-            fps: Math.round(1000 / config.FRAME_INTERVAL),
-            change: Detection['_lastChange'] ?? 0,
-            hasContent: Detection['_lastHasContent'] ?? false,
-            isStable: Detection['_lastIsStable'] ?? false,
-          };
-      if (debug) {
-        UI.updateDebugFPS(debug.fps, _lastChange.value, _lastHasContent.value, _lastIsStable.value, rect);
+      // 获取 display 尺寸
+      const displayEl = document.getElementById('video-container');
+      const displaySize = displayEl
+        ? { width: displayEl.clientWidth, height: displayEl.clientHeight }
+        : null;
+
+      if (displaySize) {
+        const rect = Detection.computeRect(videoSize, displaySize);
+
+        // 先处理当前帧，更新 lastFrameData 和稳定状态
+        Detection.processFrame(videoEl, rect);
+
+        // 再基于已处理的帧判断是否可触发识别
+        const ready = Detection.isReadyToCapture(videoEl, rect);
+
+        if (ready) {
+          triggerCapture(videoEl, rect);
+        }
+
+        // 绘制识别框覆盖层
+        UI.drawFrameOverlay(rect, videoSize, displaySize);
+
+        // 调试信息
+        const info = getDebugInfo();
+        const debug = info.current === State.PROCESSING || info.current === State.SHOWING_RESULT
+          ? null
+          : {
+              fps: Math.round(1000 / config.FRAME_INTERVAL),
+              change: Detection['_lastChange'] ?? 0,
+              hasContent: Detection['_lastHasContent'] ?? false,
+              isStable: Detection['_lastIsStable'] ?? false,
+            };
+        if (debug) {
+          UI.updateDebugFPS(debug.fps, _lastChange.value, _lastHasContent.value, _lastIsStable.value, rect);
+        }
       }
+    } catch (err) {
+      console.error('[App] Detection loop error:', err.name, err.message);
+      console.error('[App] Stack:', err.stack);
     }
 
     frameTimer = setTimeout(loop, config.FRAME_INTERVAL);
