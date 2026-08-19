@@ -56,7 +56,8 @@ async function startCameraLoop() {
   try {
     console.log('[CAMERA] calling Camera.startCamera()');
     await Camera.startCamera();
-    const { stream, videoEl } = Camera;
+    const stream = Camera.stream;
+    const videoEl = document.getElementById('video');
     console.log('[CAMERA] startCamera() resolved, stream=', !!stream, 'videoEl=', !!videoEl);
     UI.setVideoElement(videoEl);
     setState(State.CAMERA_READY);
