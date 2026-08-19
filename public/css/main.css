@@ -612,24 +612,18 @@ html, body {
 /* ── 静态扫描框（独立于 Detection）────────────────────── */
 .scan-frame {
   position: fixed;
-  left: 10vw;
-  top: 30vh;
-  width: 80vw;
-  height: 30vh;
+  left: 4vw;
+  top: 12vh;
+  width: 92vw;
+  height: 48vh;
   border: 4px solid #4ADE80;
   border-radius: 8px;
   background: rgba(74, 222, 128, 0.04);
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  padding-bottom: 12px;
   pointer-events: none;
   z-index: 9999;
   box-sizing: border-box;
-  /* 角标装饰 */
-  box-shadow:
-    inset 0 0 0 1px rgba(74, 222, 128, 0.2),
-    0 0 0 9999px rgba(0, 0, 0, 0.65);
+  /* 外部遮罩：压暗框外区域，透明度适中 */
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6);
 }
 
 .scan-frame::before,
@@ -667,7 +661,12 @@ html, body {
   border-radius: 0 0 4px 0;
 }
 
+/* 提示文字移到扫描框下方 */
 .scan-frame-label {
+  position: fixed;
+  left: 50%;
+  bottom: calc(12vh + 48vh + 12px);
+  transform: translateX(-50%);
   font-size: 14px;
   font-weight: 600;
   color: #4ADE80;
@@ -677,6 +676,21 @@ html, body {
   padding: 6px 16px;
   border-radius: 999px;
   white-space: nowrap;
+  pointer-events: none;
+  z-index: 10000;
+}
+
+/* ── 横屏适配 ───────────────────────────────────────── */
+@media (orientation: landscape) {
+  .scan-frame {
+    left: 8vw;
+    top: 8vh;
+    width: 84vw;
+    height: 84vh;
+  }
+  .scan-frame-label {
+    bottom: calc(8vh + 84vh + 12px);
+  }
 }
 
 /* ── 扫描框诊断面板 ─────────────────────────────────── */
