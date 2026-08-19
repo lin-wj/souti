@@ -18,7 +18,6 @@ const DEFAULT_constraints = {
 };
 
 let stream = null;
-let videoEl = null;
 let onErrorCallbacks = [];
 let onStreamCallbacks = [];
 
@@ -69,22 +68,15 @@ export async function startCamera() {
     throw err;
   }
 
-  // 等待视频元素就绪
-  videoEl = document.createElement('video');
-  videoEl.playsInline = true;
-  videoEl.muted = true;
-  videoEl.autoplay = true;
-  videoEl.srcObject = stream;
+  // 将流赋给页面已有的 <video id="video"> 元素
+  const videoEl = document.getElementById('video');
+  if (videoEl) {
+    videoEl.srcObject = stream;
+    await videoEl.play().catch(e => console.warn('[CAMERA] autoplay failed:', e));
+  }
 
-  await new Promise((resolve, reject) => {
-    videoEl.onloadedmetadata = () => {
-      videoEl.play().then(resolve).catch(reject);
-    };
-    videoEl.onerror = () => reject(new Error('Video element error'));
-  });
-
-  onStreamCallbacks.forEach((fn) => fn(stream, videoEl));
-  return { stream, videoEl };
+  onStreamCallbacks.forEach((fn) => fn(stream));
+  return { stream };
 }
 
 /** 停止摄像头并释放资源。 */
@@ -93,14 +85,11 @@ export function stopCamera() {
     stream.getTracks().forEach((track) => track.stop());
     stream = null;
   }
-  if (videoEl) {
-    videoEl.srcObject = null;
-    videoEl = null;
-  }
 }
 
 /** 获取当前摄像头分辨率。 */
 export function getVideoDimensions() {
+  const videoEl = document.getElementById('video');
   if (!videoEl || !videoEl.videoWidth) return null;
   return { width: videoEl.videoWidth, height: videoEl.videoHeight };
 }
@@ -133,8 +122,5 @@ export default {
   onStreamReady,
   get stream() {
     return stream;
-  },
-  get videoEl() {
-    return videoEl;
   },
 };
