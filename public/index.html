@@ -17,12 +17,12 @@
   <div id="video-container">
     <video id="video" autoplay playsinline muted></video>
     <canvas id="overlay-canvas"></canvas>
-    <!-- 静态扫描框 — 独立于 Detection，纯 CSS + HTML -->
+    <!-- 静态扫描框 -->
     <div id="scan-frame" class="scan-frame">
       <div class="scan-frame-corner-bl"></div>
       <div class="scan-frame-corner-br"></div>
     </div>
-    <!-- 提示文字 — 在扫描框外部 -->
+    <!-- 提示文字 -->
     <div class="scan-frame-label">将题目放入框内</div>
     <!-- 状态提示 -->
     <div class="frame-hint">
@@ -37,6 +37,20 @@
     <div id="scan-dia-camera">Camera: —</div>
     <div id="scan-dia-video">Video: —</div>
     <div id="scan-dia-frame">Frame: —</div>
+  </div>
+
+  <!-- OCR 调试面板（debug=ocr 时显示） -->
+  <div id="ocr-panel" class="ocr-panel" style="display:none">
+    <div class="ocr-panel-header">
+      <span class="ocr-panel-title">📷 OCR 调试</span>
+      <span id="ocr-status" class="ocr-status">状态：待机</span>
+    </div>
+    <button id="ocr-btn" class="ocr-btn">开始识别</button>
+    <div id="ocr-result" class="ocr-result">
+      <div class="ocr-result-label">OCR 原始文本：</div>
+      <pre id="ocr-text" class="ocr-text"></pre>
+      <div id="ocr-meta" class="ocr-meta"></div>
+    </div>
   </div>
 
   <!-- 识别结果面板 -->
