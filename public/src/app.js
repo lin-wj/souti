@@ -1,3 +1,4 @@
+// debug=ocr deployed v2
 /**
  * 主控制器 — 串联 Camera、Detection、Processing、Provider、UI
  *
@@ -282,3 +283,4 @@ export function destroy() {
 }
 
 export default { init, destroy };
+// debug=ocr deployed v4 - 1787128011

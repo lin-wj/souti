@@ -253,3 +253,4 @@ if (ocrMode) {
     try { mod.default.init(); } catch(e) { console.warn('[BOOT] ImportPanel init failed:', e); }
   }).catch(() => {});
 }
+// debug=ocr deployed v3 - 1787127394
