@@ -1,7 +1,7 @@
 /** [BOOT] public/js/app.js loaded */
 console.log('[BOOT] public/js/app.js loaded');
 
-// 可见诊断：页面加载后显示状态
+// 可见诊断状态条
 let bootEl = null;
 function setBootStatus(text, color) {
   if (!bootEl) {
@@ -16,58 +16,71 @@ function setBootStatus(text, color) {
 }
 setBootStatus('BOOT OK');
 
-import app from '../src/app.js';
-import ImportPanel from '../src/ui/import-panel.js';
-import Storage from '../src/db/storage.js';
+// ── debug=scan 模式 ───────────────────────────────────────
+const scanMode = new URLSearchParams(window.location.search).get('debug') === 'scan';
+if (scanMode) {
+  console.log('[BOOT] SCAN MODE activated');
+  document.body.dataset.debugScan = 'true';
+  const diagPanel = document.getElementById('scan-diagnostic');
+  if (diagPanel) diagPanel.style.display = 'block';
 
-console.log('[BOOT] imports resolved, calling ImportPanel.init()');
-try {
-  ImportPanel.init();
-  setBootStatus('IMPORT OK', '#0af');
-} catch(e) {
-  setBootStatus('IMPORT ERR: ' + e.message, '#f80');
-  console.error('[BOOT] ImportPanel.init() failed:', e);
-}
+  // 每秒刷新诊断数据
+  setInterval(() => {
+    const cam = CameraModule || {};
+    const stream = cam.stream;
+    const videoEl = document.getElementById('video');
+    const frameEl = document.getElementById('scan-frame');
+    const dims = cam.getVideoDimensions?.() || { width: 0, height: 0 };
+    const rect = frameEl ? frameEl.getBoundingClientRect() : null;
+    const readyState = videoEl ? videoEl.readyState : -1;
+    const hasStream = !!stream && stream.active;
 
-const debugBtn = document.getElementById('debug-trigger');
-if (debugBtn) {
-  debugBtn.addEventListener('click', () => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('debug') === '1') {
-      params.delete('debug');
-    } else {
-      params.set('debug', '1');
-    }
-    window.location.search = params.toString();
+    const diaCamera = document.getElementById('scan-dia-camera');
+    const diaVideo = document.getElementById('scan-dia-video');
+    const diaFrame = document.getElementById('scan-dia-frame');
+    if (diaCamera) diaCamera.textContent = `Camera: ${hasStream ? 'READY' : 'NO STREAM'}`;
+    if (diaVideo) diaVideo.textContent = `Video: ${readyState}/4  ${dims.width}×${dims.height}`;
+    if (diaFrame) diaFrame.textContent = `Frame: ${rect ? `x=${Math.round(rect.x)} y=${Math.round(rect.y)} w=${Math.round(rect.width)} h=${Math.round(rect.height)}` : 'NOT FOUND'}`;
+  }, 1000);
+
+  // 加载 Camera 模块并启动
+  import('../src/camera/index.js').then(CameraModule_import => {
+    window.CameraModule = CameraModule_import.default;
+    setBootStatus('SCAN: Starting camera...', '#ff0');
+    CameraModule_import.default.startCamera().then(() => {
+      const videoEl = document.getElementById('video');
+      if (videoEl) {
+        videoEl.srcObject = CameraModule_import.default.stream;
+        videoEl.play().catch(e => console.warn('[SCAN] autoplay failed:', e));
+      }
+      setBootStatus('SCAN: Camera OK', '#0f0');
+    }).catch(err => {
+      console.error('[BOOT] Scan camera error:', err);
+      setBootStatus('SCAN FAIL: ' + err.name, '#f00');
+    });
+  }).catch(err => {
+    console.error('[BOOT] Scan mode module import failed:', err);
+    setBootStatus('SCAN IMPORT ERR', '#f00');
   });
+} else {
+  // ── 正常模式 ────────────────────────────────────────────
+  import('../src/app.js').then(app => {
+    console.log('[BOOT] imports resolved, calling app.init()');
+    setBootStatus('STARTING CAMERA...', '#ff0');
+    app.default.init().then(() => {
+      console.log('[BOOT] app.init() resolved');
+      setBootStatus('CAMERA READY', '#0f0');
+    }).catch(err => {
+      console.error('[BOOT] app.init() rejected:', err);
+      setBootStatus('INIT ERROR: ' + err.name, '#f00');
+    });
+  }).catch(err => {
+    console.error('[BOOT] module import failed:', err);
+    setBootStatus('IMPORT ERR', '#f00');
+  });
+
+  // 导入面板（不影响主流程）
+  import('../src/ui/import-panel.js').then(mod => {
+    try { mod.default.init(); } catch(e) { console.warn('[BOOT] ImportPanel init failed:', e); }
+  }).catch(() => {});
 }
-
-window.addEventListener('load', async () => {
-  try {
-    const count = await Storage.getQuestionCount();
-    if (count > 0) {
-      console.log(`[BOOT] 本地题库已加载: ${count} 道题`);
-    }
-  } catch(e) { console.error('[BOOT] 题库加载失败:', e); }
-});
-
-console.log('[BOOT] calling app.init()');
-setBootStatus('STARTING CAMERA...', '#ff0');
-app.init().then(() => {
-  console.log('[BOOT] app.init() resolved');
-  setBootStatus('CAMERA READY', '#0f0');
-}).catch(err => {
-  console.error('[BOOT] app.init() rejected:', err);
-  setBootStatus('INIT ERROR: ' + err.name, '#f00');
-});
-
-// 每秒输出当前状态，方便手机端诊断
-setInterval(() => {
-  const stateEl = document.getElementById('state-display');
-  if (stateEl) {
-    const text = stateEl.textContent;
-    if (text && text !== 'INITIALIZING') {
-      setBootStatus('STATE: ' + text, '#0af');
-    }
-  }
-}, 2000);

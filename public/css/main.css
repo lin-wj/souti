@@ -54,6 +54,32 @@ html, body {
   width: 100%;
   height: 100%;
   pointer-events: none;
+  z-index: 4;
+}
+
+/* ── 扫描框诊断面板 ─────────────────────────────────── */
+.scan-diagnostic {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--text-muted);
+  z-index: 100;
+  line-height: 1.7;
+  min-width: 200px;
+}
+
+.scan-dia-title {
+  font-weight: 700;
+  color: #4ADE80;
+  margin-bottom: 4px;
+  font-size: 13px;
 }
 
 /* ── 识别框提示 ───────────────────────────────────────── */
@@ -548,4 +574,139 @@ html, body {
 
 .btn-clear:hover {
   background: rgba(248, 113, 113, 0.2);
+}
+
+/* ── OCR 调试面板 ─────────────────────────────────────── */
+.ocr-debug {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.ocr-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #60a5fa;
+  margin-bottom: 4px;
+}
+
+.ocr-text {
+  font-size: 11px;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 120px;
+  overflow-y: auto;
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+
+.ocr-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+/* ── 静态扫描框（独立于 Detection）────────────────────── */
+.scan-frame {
+  position: fixed;
+  left: 10vw;
+  top: 30vh;
+  width: 80vw;
+  height: 30vh;
+  border: 4px solid #4ADE80;
+  border-radius: 8px;
+  background: rgba(74, 222, 128, 0.04);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 12px;
+  pointer-events: none;
+  z-index: 9999;
+  box-sizing: border-box;
+  /* 角标装饰 */
+  box-shadow:
+    inset 0 0 0 1px rgba(74, 222, 128, 0.2),
+    0 0 0 9999px rgba(0, 0, 0, 0.65);
+}
+
+.scan-frame::before,
+.scan-frame::after,
+.scan-frame-corner-bl,
+.scan-frame-corner-br {
+  content: '';
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  border-color: #4ADE80;
+  border-style: solid;
+  border-image: none;
+}
+
+.scan-frame::before {
+  top: -2px; left: -2px;
+  border-width: 4px 0 0 4px;
+  border-radius: 4px 0 0 0;
+}
+.scan-frame::after {
+  top: -2px; right: -2px;
+  border-width: 4px 4px 0 0;
+  border-radius: 0 4px 0 0;
+}
+
+.scan-frame-corner-bl {
+  bottom: -2px; left: -2px;
+  border-width: 0 0 4px 4px;
+  border-radius: 0 0 0 4px;
+}
+.scan-frame-corner-br {
+  bottom: -2px; right: -2px;
+  border-width: 0 4px 4px 0;
+  border-radius: 0 0 4px 0;
+}
+
+.scan-frame-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #4ADE80;
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  padding: 6px 16px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* ── 扫描框诊断面板 ─────────────────────────────────── */
+.scan-diagnostic {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--text-muted);
+  z-index: 100;
+  line-height: 1.7;
+  min-width: 200px;
+}
+.scan-dia-title {
+  font-weight: 700;
+  color: #4ADE80;
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+
+/* ── debug=scan 模式覆盖 ────────────────────────────── */
+body[data-debug-scan="true"] #overlay-canvas {
+  display: none !important;
+}
+body[data-debug-scan="true"] .scan-frame {
+  border-color: #f87171 !important;
 }

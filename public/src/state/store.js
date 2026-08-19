@@ -26,11 +26,24 @@ export function setState(nextState, info = {}) {
   const prev = currentState;
   currentState = nextState;
   const timestamp = Date.now();
+  const source = info.source || 'unknown';
+  const errName = info.error?.name || '';
+  const errMsg = info.error?.message || '';
+  console.log(
+    `[STATE] ${prev} → ${nextState}`,
+    `source=${source}`,
+    errName ? `error=${errName}: ${errMsg}` : ''
+  );
+  if (nextState === State.CAMERA_ERROR) {
+    console.trace(`[STATE] CAMERA_ERROR set by: ${source}`);
+  }
   debugInfo = {
     prev,
     current: nextState,
     label: stateLabel(nextState),
     timestamp,
+    source,
+    error: info.error,
     ...info,
   };
   notifyListeners();

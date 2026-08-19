@@ -1,12 +1,10 @@
 /**
  * 主控制器 — 串联 Camera、Detection、Processing、Provider、UI
  *
- * 核心循环：
- *   1. 每 FRAME_INTERVAL ms 从视频流抽取一帧
- *   2. 在识别框区域内检测变化和稳定
- *   3. 满足条件时截取最佳帧并调用 AI
- *   4. 显示结果，进入等待变化状态
- *   5. 检测到变化后重复上述过程
+ * 核心原则：
+ *   - CAMERA_ERROR 只能由 getUserMedia 本身失败触发
+ *   - Detection/OCR/UI 的任何异常都不能修改摄像头状态
+ *   - debug=scan 模式仅验证摄像头+扫描框，不启动 Detection/OCR
  */
 
 import config from './config.js';
@@ -17,22 +15,21 @@ import { solveQuestion, ErrorCode } from './provider/index.js';
 import OCR from './ocr/index.js';
 import UI from './ui/index.js';
 import State from './state/machine.js';
-import { setState, getDebugInfo } from './state/store.js';
+import { setState, getDebugInfo, getState } from './state/store.js';
 
 console.log('[APP] src/app.js loaded');
+console.log('[APP] navigator.mediaDevices:', typeof navigator.mediaDevices);
+console.log('[APP] getUserMedia:', typeof navigator.mediaDevices?.getUserMedia);
+console.log('[APP] location.protocol:', location.protocol);
+console.log('[APP] location.hostname:', location.hostname);
 
 // ── 运行标志 ──────────────────────────────────────────────
 let running = false;
 let frameTimer = null;
 let resizeObserver = null;
 let abortController = null;
-let ocrTimer = null;       // OCR 调试独立定时器
-let lastOCRTimer = 0;      // 上次 OCR 触发时间（去抖）
-
-console.log('[APP] navigator.mediaDevices:', typeof navigator.mediaDevices);
-console.log('[APP] getUserMedia:', typeof navigator.mediaDevices?.getUserMedia);
-console.log('[APP] location.protocol:', location.protocol);
-console.log('[APP] location.hostname:', location.hostname);
+let ocrTimer = null;
+let lastOCRTimer = 0;
 
 // ── 初始化 ────────────────────────────────────────────────
 export async function init() {
@@ -51,44 +48,74 @@ async function startCameraLoop() {
   if (running) { console.log('[CAMERA] already running, skip'); return; }
   running = true;
 
-  setState(State.INITIALIZING);
+  setState(State.INITIALIZING, { source: 'init' });
 
   try {
     console.log('[CAMERA] calling Camera.startCamera()');
     await Camera.startCamera();
+    console.log('[TRACE] CAMERA_GET_USER_MEDIA_SUCCESS');
+
     const stream = Camera.stream;
     const videoEl = document.getElementById('video');
     console.log('[CAMERA] startCamera() resolved, stream=', !!stream, 'videoEl=', !!videoEl);
-    UI.setVideoElement(videoEl);
-    setState(State.CAMERA_READY);
-    console.log('[CAMERA] setState(CAMERA_READY) done');
 
-    // 监听摄像头错误
+    // 将流赋给页面视频元素
+    if (videoEl && stream) {
+      videoEl.srcObject = stream;
+      console.log('[TRACE] CAMERA_STREAM_ATTACHED');
+      await videoEl.play();
+      console.log('[TRACE] CAMERA_PLAY_SUCCESS');
+    }
+
+    UI.setVideoElement(videoEl);
+
+    // ── 关键修复：只有在 stream 不存在时才允许 CAMERA_ERROR ──
+    // onCameraError 仅用于记录，不直接修改状态机
     Camera.onCameraError((err, message) => {
-      setState(State.CAMERA_ERROR, { error: message });
+      console.error('[CAMERA] onCameraError fired (stream still exists:', !!Camera.stream, ')', err.name, message);
+      // 只有在实际没有 stream 的情况下才允许转为错误
+      if (!Camera.stream) {
+        setState(State.CAMERA_ERROR, { error: err, source: 'onCameraError', message });
+      } else {
+        console.warn('[CAMERA] onCameraError ignored — stream is active');
+      }
     });
 
-    // 开始主循环
-    startDetectionLoop(videoEl);
+    console.log('[TRACE] BEFORE_CAMERA_READY');
+    setState(State.CAMERA_READY, { source: 'startCameraLoop' });
+    console.log('[TRACE] AFTER_CAMERA_READY');
 
-    // 启动 OCR 调试循环（独立于主状态机，仅 debug 模式）
-    startOCRDetectionLoop(videoEl);
-
-    // 监听窗口大小变化以重绘识别框
-    setupResizeObserver(videoEl);
+    // 仅在非 scan 模式下启动 Detection
+    const isScanMode = new URLSearchParams(window.location.search).get('debug') === 'scan';
+    if (!isScanMode) {
+      console.log('[CAMERA] starting detection loop');
+      startDetectionLoop(videoEl);
+      startOCRDetectionLoop(videoEl);
+      setupResizeObserver(videoEl);
+    } else {
+      console.log('[CAMERA] scan mode — skipping Detection/OCR');
+    }
   } catch (err) {
     console.error('[CAMERA] startCameraLoop error:', err.name, err.message);
     console.error('[CAMERA] full error:', err);
-    setState(State.CAMERA_ERROR, { error: err.message });
+    console.trace('[CAMERA] error stack');
+    // 只有 getUserMedia 失败或 videoEl 为 null 时才允许 CAMERA_ERROR
+    const canBeCameraError = !Camera.stream || err.name === 'NotAllowedError' || err.name === 'NotFoundError';
+    if (canBeCameraError) {
+      setState(State.CAMERA_ERROR, { error: err, source: 'startCameraLoop.catch', message: err.message });
+    } else {
+      console.warn('[CAMERA] non-camera error, keeping current state:', err.name);
+    }
     running = false;
   }
 }
 
 /**
  * 主检测循环 — 按 FRAME_INTERVAL 定时抽帧。
+ * 所有异常必须被捕获，不能影响摄像头状态。
  */
 function startDetectionLoop(videoEl) {
-  stopDetectionLoop(); // 确保只有一条循环
+  stopDetectionLoop();
 
   const loop = () => {
     if (!running) return;
@@ -100,7 +127,6 @@ function startDetectionLoop(videoEl) {
         return;
       }
 
-      // 获取 display 尺寸
       const displayEl = document.getElementById('video-container');
       const displaySize = displayEl
         ? { width: displayEl.clientWidth, height: displayEl.clientHeight }
@@ -109,20 +135,15 @@ function startDetectionLoop(videoEl) {
       if (displaySize) {
         const rect = Detection.computeRect(videoSize, displaySize);
 
-        // 先处理当前帧，更新 lastFrameData 和稳定状态
         Detection.processFrame(videoEl, rect);
-
-        // 再基于已处理的帧判断是否可触发识别
         const ready = Detection.isReadyToCapture(videoEl, rect);
 
         if (ready) {
           triggerCapture(videoEl, rect);
         }
 
-        // 绘制识别框覆盖层
         UI.drawFrameOverlay(rect, videoSize, displaySize);
 
-        // 调试信息
         const info = getDebugInfo();
         const debug = info.current === State.PROCESSING || info.current === State.SHOWING_RESULT
           ? null
@@ -133,11 +154,12 @@ function startDetectionLoop(videoEl) {
               isStable: Detection['_lastIsStable'] ?? false,
             };
         if (debug) {
-          UI.updateDebugFPS(debug.fps, _lastChange.value, _lastHasContent.value, _lastIsStable.value, rect);
+          UI.updateDebugFPS(debug.fps, _lastChange.value, _lastHasContent.value, _lastIsStable.value);
         }
       }
     } catch (err) {
-      console.error('[App] Detection loop error:', err.name, err.message);
+      // 检测循环错误只打日志，绝不改状态
+      console.error('[App] Detection loop error (state unchanged):', err.name, err.message);
       console.error('[App] Stack:', err.stack);
     }
 
@@ -148,59 +170,36 @@ function startDetectionLoop(videoEl) {
 }
 
 function stopDetectionLoop() {
-  if (frameTimer) {
-    clearTimeout(frameTimer);
-    frameTimer = null;
-  }
+  if (frameTimer) { clearTimeout(frameTimer); frameTimer = null; }
 }
 
 /**
- * OCR 调试循环 — 独立于主状态机，仅在画面稳定时触发 OCR。
- * 不改变状态，不触发识别流程，仅展示原始 OCR 结果供调试。
+ * OCR 调试循环 — 不改变任何状态。
  */
 function startOCRDetectionLoop(videoEl) {
   stopOCRDetectionLoop();
-
-  const interval = 2000; // 每 2 秒尝试一次 OCR（避免高频调用）
+  const interval = 2000;
 
   const loop = () => {
     if (!running) return;
-
-    const state = State.getState();
-    // 只在 CAMERA_READY 或 WAITING_FOR_CHANGE 时做 OCR 预览
-    // PROCESSING/MATCHING 期间跳过，避免干扰
+    const state = getState();
     if (state === State.CAMERA_READY || state === State.WAITING_FOR_CHANGE) {
       const now = Date.now();
-      if (now - lastOCRTimer < interval) {
-        ocrTimer = setTimeout(loop, interval);
-        return;
-      }
-
+      if (now - lastOCRTimer < interval) { ocrTimer = setTimeout(loop, interval); return; }
       const videoSize = Camera.getVideoDimensions();
-      if (!videoSize) {
-        ocrTimer = setTimeout(loop, interval);
-        return;
-      }
-
+      if (!videoSize) { ocrTimer = setTimeout(loop, interval); return; }
       const displayEl = document.getElementById('video-container');
-      if (!displayEl) {
-        ocrTimer = setTimeout(loop, interval);
-        return;
-      }
-
+      if (!displayEl) { ocrTimer = setTimeout(loop, interval); return; }
       const displaySize = { width: displayEl.clientWidth, height: displayEl.clientHeight };
       const rect = Detection.computeRect(videoSize, displaySize);
       const frameData = Detection.captureFrameForHash(videoEl, rect);
-
       if (frameData) {
         lastOCRTimer = now;
-        // 使用临时 canvas 传给 OCR
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = rect.width;
         tempCanvas.height = rect.height;
         const ctx = tempCanvas.getContext('2d');
         ctx.putImageData(new ImageData(frameData, rect.width, rect.height), 0, 0);
-
         OCR.recognize(tempCanvas).then(result => {
           UI.showOCRDebug(result);
         }).catch(err => {
@@ -209,58 +208,41 @@ function startOCRDetectionLoop(videoEl) {
         });
       }
     }
-
     ocrTimer = setTimeout(loop, interval);
   };
-
   ocrTimer = setTimeout(loop, interval);
 }
 
 function stopOCRDetectionLoop() {
-  if (ocrTimer) {
-    clearTimeout(ocrTimer);
-    ocrTimer = null;
-  }
+  if (ocrTimer) { clearTimeout(ocrTimer); ocrTimer = null; }
 }
 
 /**
  * 触发截取和 AI 识别。
  */
 async function triggerCapture(videoEl, rect) {
-  setState(State.CAPTURING);
-
+  setState(State.CAPTURING, { source: 'triggerCapture' });
   try {
     const { base64 } = await Processing.extractAndCompress(videoEl, rect);
-
-    // TODO Phase 2D: 替换为 OCR + 本地题库匹配
-    setState(State.PROCESSING);
-
+    setState(State.PROCESSING, { source: 'triggerCapture' });
     abortController = new AbortController();
     const result = await solveQuestion(base64, abortController.signal);
-
     if (!result.success) {
-      setState(State.AI_ERROR, { error_code: result.error_code, error: result.error });
+      setState(State.AI_ERROR, { error_code: result.error_code, error: result.error, source: 'solveQuestion' });
       UI.showResult(result);
       return;
     }
-
-    // 记录 hash 用于去重（从当前视频帧提取）
     const frameData = Detection.captureFrameForHash(videoEl, rect);
     const hash = frameData ? Detection.computePerceptualHash(frameData, rect.width, rect.height) : null;
     Detection.markRecognized(hash);
-    Detection.resetDetection(); // 重置稳定计时器，防止下一题过快触发
-
-    setState(State.SHOWING_RESULT, { result });
+    Detection.resetDetection();
+    setState(State.SHOWING_RESULT, { result, source: 'triggerCapture' });
     UI.showResult(result);
-
-    // 进入等待变化状态
-    setTimeout(() => {
-      setState(State.WAITING_FOR_CHANGE);
-    }, 500);
+    setTimeout(() => { setState(State.WAITING_FOR_CHANGE, { source: 'triggerCapture' }); }, 500);
   } catch (err) {
     console.error('[App] Capture error:', err);
     if (err.name !== 'AbortError') {
-      setState(State.AI_ERROR, { error: err.message });
+      setState(State.AI_ERROR, { error: err.message, source: 'triggerCapture.catch' });
       UI.showResult({ success: false, error: err.message, error_code: ErrorCode.UNKNOWN });
     }
   } finally {
@@ -273,23 +255,17 @@ async function triggerCapture(videoEl, rect) {
  */
 function setupResizeObserver(videoEl) {
   if (resizeObserver) resizeObserver.disconnect();
-
   resizeObserver = new ResizeObserver(() => {
     const videoSize = Camera.getVideoDimensions();
     if (!videoSize) return;
-
     const displayEl = document.getElementById('video-container');
     if (!displayEl) return;
-
     const displaySize = { width: displayEl.clientWidth, height: displayEl.clientHeight };
     const rect = Detection.computeRect(videoSize, displaySize);
     UI.drawFrameOverlay(rect, videoSize, displaySize);
   });
-
   const videoContainer = document.getElementById('video-container');
-  if (videoContainer) {
-    resizeObserver.observe(videoContainer);
-  }
+  if (videoContainer) { resizeObserver.observe(videoContainer); }
 }
 
 /**
@@ -299,15 +275,9 @@ export function destroy() {
   running = false;
   stopDetectionLoop();
   stopOCRDetectionLoop();
-  if (abortController) {
-    abortController.abort();
-    abortController = null;
-  }
+  if (abortController) { abortController.abort(); abortController = null; }
   Camera.stopCamera();
-  if (resizeObserver) {
-    resizeObserver.disconnect();
-    resizeObserver = null;
-  }
+  if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null; }
   OCR.destroy();
 }
 
