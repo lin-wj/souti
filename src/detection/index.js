@@ -1,12 +1,19 @@
 /**
- * 画面检测模块
+ * 画面检测模块 — 重构版
  *
- * 职责：
- *   - 从视频流中抽取帧
- *   - 计算识别框区域内的图像特征
- *   - 检测画面变化（与上一帧比较）
- *   - 检测识别框内是否有有效内容（非纯色/空白）
- *   - 判断画面是否稳定
+ * 检测流程：
+ *   NO_CONTENT → CONTENT_DETECTED → STABLE(count) → CAPTURING
+ *
+ * 触发条件：
+ *   1. 检测到有效内容（方差 > 阈值）
+ *   2. 连续 N 帧相似（变化 < 阈值）
+ *   3. 冷却时间已过（防止重复识别同一题）
+ *   4. 不在处理中状态
+ *
+ * 防重复机制：
+ *   - 使用 perceptual hash 比较当前帧与上一识别帧
+ *   - hash 相似度 > 0.85 时跳过（同一道题轻微晃动）
+ *   - 冷却时间 COOLDOWN_TIME 内不触发
  */
 
 import config from '../config.js';
@@ -14,64 +21,55 @@ import State from '../state/machine.js';
 import { getState } from '../state/store.js';
 
 // ── 内部状态 ──────────────────────────────────────────────
-let lastFrameData = null;   // Uint8ClampedArray
-let lastChangeTime = 0;     // 上次检测到变化的时间戳
-let stableStart = null;     // 开始稳定的时间戳
-let lastRecognizedHash = null; // 上次识别的图片 hash（用于去重）
-let lastRecognitionTime = 0;  // 上次识别的时间戳
-let frameCount = 0;
-let totalProcessed = 0;
+let lastFrameData = null;        // Uint8ClampedArray — 上一帧像素数据
+let lastFrameHash = null;        // 上一帧的 perceptual hash（用于去重）
+let stableCount = 0;             // 当前连续相似帧计数
+let lastChangeTime = 0;          // 上次检测到明显变化的时间戳
+let lastRecognitionTime = 0;     // 上次触发识别的时间戳（冷却计时）
+let frameCount = 0;              // 总帧计数（调试用）
+let totalProcessed = 0;          // 成功处理的帧数（调试用）
 
 // ── 调试导出 ──────────────────────────────────────────────
 export const _lastChange = { value: 0 };
 export const _lastHasContent = { value: false };
 export const _lastIsStable = { value: false };
+export const _stableCount = { value: 0 };
 
 // ── 回调 ─────────────────────────────────────────────────
-let onContent = null;   // (hasContent) => void
-let onStable = null;    // () => void
-let onChange = null;    // () => void
-let onFrameProcessed = null; // ({ change, hasContent, fps }) => void
+let onContent = null;
+let onStable = null;
+let onChange = null;
+let onFrameProcessed = null;
 
-export function onDetectContent(fn) {
-  onContent = fn;
-}
-
-export function onDetectStable(fn) {
-  onStable = fn;
-}
-
-export function onDetectChange(fn) {
-  onChange = fn;
-}
-
-export function onFrameProcessedCallback(fn) {
-  onFrameProcessed = fn;
-}
+export function onDetectContent(fn) { onContent = fn; }
+export function onDetectStable(fn) { onStable = fn; }
+export function onDetectChange(fn) { onChange = fn; }
+export function onFrameProcessedCallback(fn) { onFrameProcessed = fn; }
 
 /**
- * 重置检测状态（当识别成功后调用，进入等待变化模式）。
+ * 重置检测状态（识别成功后调用）。
+ * 进入 WAITING_FOR_CHANGE 后重置，等待新题目。
  */
 export function resetDetection() {
   lastFrameData = null;
-  stableStart = null;
-  lastRecognizedHash = null;
+  lastFrameHash = null;
+  stableCount = 0;
   lastRecognitionTime = Date.now();
+  console.log('[Detection] resetDetection: cooldown reset, recognitionTime=' + lastRecognitionTime);
 }
 
 /**
- * 标记当前帧已被识别，用于冷却时间控制。
+ * 标记当前帧已被识别，更新冷却时间和 hash。
  */
 export function markRecognized(hash) {
-  lastRecognizedHash = hash;
+  lastFrameHash = hash;
   lastRecognitionTime = Date.now();
+  stableCount = 0;
+  console.log('[Detection] markRecognized: hash=', hash?.substring(0, 8), 'cooldownUntil=', lastRecognitionTime + config.COOLDOWN_TIME);
 }
 
 /**
  * 从视频元素截取指定区域的帧数据。
- * @param {HTMLVideoElement} video
- * @param {{x, y, width, height}} rect — 识别框在画布上的像素坐标
- * @returns {Uint8ClampedArray|null} RGBA 像素数据，失败返回 null
  */
 export function captureFrame(video, rect) {
   try {
@@ -79,7 +77,6 @@ export function captureFrame(video, rect) {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return null;
 
-    // 确保 canvas 尺寸匹配识别区域
     if (canvas.width !== rect.width || canvas.height !== rect.height) {
       canvas.width = rect.width;
       canvas.height = rect.height;
@@ -94,70 +91,70 @@ export function captureFrame(video, rect) {
 }
 
 /**
- * 判断识别框内是否存在有效内容（非纯色/空白页）。
- * 使用方差 + 边缘检测启发式判断。
+ * 判断识别框内是否存在有效内容。
+ * 使用 RGB 方差判断：白纸黑字方差适中，纯色/空白方差低。
  */
 export function hasContent(pixelData, width, height) {
-  if (!pixelData || pixelData.length < 4) return false;
+  if (!pixelData || pixelData.length < 16) return false;
 
-  let rSum = 0, gSum = 0, bSum = 0;
-  let rVar = 0, gVar = 0, bVar = 0;
   const n = width * height;
-  const step = Math.max(1, Math.floor(n / 10000)); // 抽样加速
+  const step = Math.max(1, Math.floor(n / 5000)); // 抽样加速
 
+  // 计算均值
+  let rSum = 0, gSum = 0, bSum = 0;
+  let count = 0;
   for (let i = 0; i < pixelData.length; i += 4 * step) {
-    const r = pixelData[i];
-    const g = pixelData[i + 1];
-    const b = pixelData[i + 2];
-    rSum += r; gSum += g; bSum += b;
+    rSum += pixelData[i];
+    gSum += pixelData[i + 1];
+    bSum += pixelData[i + 2];
+    count++;
   }
+  if (count === 0) return false;
 
-  const samples = Math.ceil(n / step);
-  const rMean = rSum / samples;
-  const gMean = gSum / samples;
-  const bMean = bSum / samples;
+  const rMean = rSum / count;
+  const gMean = gSum / count;
+  const bMean = bSum / count;
 
-  let rVarSum = 0, gVarSum = 0, bVarSum = 0;
+  // 计算方差
+  let rVar = 0, gVar = 0, bVar = 0;
   for (let i = 0; i < pixelData.length; i += 4 * step) {
-    rVarSum += (pixelData[i] - rMean) ** 2;
-    gVarSum += (pixelData[i + 1] - gMean) ** 2;
-    bVarSum += (pixelData[i + 2] - bMean) ** 2;
+    rVar += (pixelData[i] - rMean) ** 2;
+    gVar += (pixelData[i + 1] - gMean) ** 2;
+    bVar += (pixelData[i + 2] - bMean) ** 2;
   }
-
-  rVar = rVarSum / samples;
-  gVar = gVarSum / samples;
-  bVar = bVarSum / samples;
-
+  rVar /= count; gVar /= count; bVar /= count;
   const avgVar = (rVar + gVar + bVar) / 3;
 
-  // 方差过低 = 纯色/空白；过高 = 可能模糊
-  // 典型纸张题目：方差适中
-  return avgVar > 50 && avgVar < 50000;
+  // 白纸黑字题目：方差约 1000–20000
+  // 纯白/纯黑页面：方差 < 50
+  // 模糊/噪点严重：方差可能 > 50000
+  return avgVar > 80 && avgVar < 40000;
 }
 
 /**
  * 计算两帧之间的差异比例（0–1）。
- * 使用像素差分 + 归一化。
+ * 使用采样像素的 RGB 绝对差之和归一化。
+ * step=12 表示每 3 个像素取 1 个样本，平衡速度与灵敏度。
  */
 export function computeFrameDifference(prev, curr, w, h) {
   if (!prev || !curr) return 1.0;
-  const maxPixels = w * h;
   let diff = 0;
-  const step = 4; // 每 4 字节一个像素
+  const totalSamples = Math.min(prev.length, curr.length);
 
-  for (let i = 0; i < prev.length && i < curr.length; i += 12) { // 跳步加速
+  // 使用较大的步长（12字节=3像素）来加速比较
+  for (let i = 0; i < totalSamples; i += 12) {
     diff += Math.abs(prev[i] - curr[i])
           + Math.abs(prev[i + 1] - curr[i + 1])
           + Math.abs(prev[i + 2] - curr[i + 2]);
   }
 
-  const samples = Math.ceil(prev.length / 12);
+  const samples = Math.ceil(totalSamples / 12);
   const maxDiff = samples * 3 * 255;
-  return diff / maxDiff;
+  return maxDiff > 0 ? diff / maxDiff : 0;
 }
 
 /**
- * 对图像生成简单的感知 hash（64-bit pHash 简化版）。
+ * 对图像生成感知 hash（16x16 = 256 bit）。
  * 用于检测同一道题的重复识别。
  */
 export function computePerceptualHash(pixelData, width, height) {
@@ -166,7 +163,6 @@ export function computePerceptualHash(pixelData, width, height) {
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
 
-    // 缩放到小尺寸
     const size = 16;
     canvas.width = size;
     canvas.height = size;
@@ -174,7 +170,7 @@ export function computePerceptualHash(pixelData, width, height) {
     const imageData = ctx.getImageData(0, 0, size, size);
     const data = imageData.data;
 
-    // 转灰度并计算平均值
+    // 计算灰度平均值作为阈值
     let sum = 0;
     for (let i = 0; i < data.length; i += 4) {
       sum += (data[i] + data[i + 1] + data[i + 2]) / 3;
@@ -189,6 +185,7 @@ export function computePerceptualHash(pixelData, width, height) {
     }
     return hash;
   } catch (e) {
+    console.warn('[Detection] computePerceptualHash error:', e);
     return null;
   }
 }
@@ -197,8 +194,7 @@ export function computePerceptualHash(pixelData, width, height) {
  * 比较两个 hash 的汉明距离，返回相似比例（0=完全不同，1=完全相同）。
  */
 export function hashSimilarity(hashA, hashB) {
-  if (!hashA || !hashB) return null;
-  if (hashA.length !== hashB.length) return null;
+  if (!hashA || !hashB || hashA.length !== hashB.length) return null;
   let diff = 0;
   for (let i = 0; i < hashA.length; i++) {
     if (hashA[i] !== hashB[i]) diff++;
@@ -207,14 +203,20 @@ export function hashSimilarity(hashA, hashB) {
 }
 
 /**
- * 主检测循环 — 由调用方每 FRAME_INTERVAL ms 调用一次。
+ * 主检测函数 — 由调用方每 FRAME_INTERVAL ms 调用一次。
+ * 不改变状态机状态，只更新内部检测状态。
+ *
  * @param {HTMLVideoElement} video
- * @param {{x, y, width, height}} rect — 识别框像素坐标
+ * @param {{x, y, width, height}} rect — 识别框在视频原始分辨率下的坐标
  */
 export function processFrame(video, rect) {
-  if (getState() === State.PROCESSING || getState() === State.CAPTURING) return;
+  const state = getState();
+  // 处理中的状态不进行检测（防止干扰）
+  if (state === State.PROCESSING || state === State.CAPTURING || state === State.MATCHING) {
+    return;
+  }
 
-  // 冷却时间内跳过
+  // 冷却时间内跳过检测（减少不必要的计算）
   const now = Date.now();
   if (now - lastRecognitionTime < config.COOLDOWN_TIME) {
     return;
@@ -227,95 +229,127 @@ export function processFrame(video, rect) {
   totalProcessed++;
   frameCount++;
 
-  // ── 检测是否有内容 ──────────────────────────────────────
+  // ── 1. 内容检测 ────────────────────────────────────────
   const content = hasContent(pixelData, width, height);
-  if (onContent) onContent(content);
   _lastHasContent.value = content;
+  if (onContent) onContent(content);
 
-  // ── 检测画面变化 ────────────────────────────────────────
+  // ── 2. 帧差异检测 ──────────────────────────────────────
   let change = 0;
   if (lastFrameData) {
     change = computeFrameDifference(lastFrameData, pixelData, width, height);
   }
   _lastChange.value = change;
 
-  if (change > config.CHANGE_THRESHOLD) {
-    lastChangeTime = now;
-    stableStart = null; // 变化了，重置稳定计时
-    if (onChange) onChange(change);
+  // ── 3. 稳定计数逻辑（核心变更）─────────────────────────
+  // 如果检测到内容且变化较小，增加稳定计数
+  // 如果变化较大，重置稳定计数
+  if (content) {
+    if (change <= config.CHANGE_THRESHOLD) {
+      // 帧相似，增加稳定计数
+      stableCount++;
+    } else {
+      // 帧差异大，重置
+      stableCount = 0;
+      lastChangeTime = now;
+      if (onChange) onChange(change);
+    }
+  } else {
+    // 无内容，重置
+    stableCount = 0;
   }
+  _stableCount.value = stableCount;
 
-  // ── 稳定检测 ────────────────────────────────────────────
-  if (!stableStart && content && change <= config.CHANGE_THRESHOLD) {
-    stableStart = now;
-  }
+  // 稳定指示器：当稳定计数接近目标时标记为稳定
+  const isStable = stableCount >= config.STABLE_FRAME_COUNT - 1;
+  _lastIsStable.value = isStable;
 
-  if (stableStart && now - stableStart >= config.STABLE_DURATION) {
-    if (onStable) onStable();
-    stableStart = now; // 防重复触发
-  }
-  _lastIsStable.value = !!(stableStart && now - stableStart >= config.STABLE_DURATION);
-
-  // 更新上一帧
-  lastFrameData = pixelData;
-
-  // ── 通知处理结果（调试用）───────────────────────────────
+  // ── 4. 通知回调 ────────────────────────────────────────
   if (onFrameProcessed) {
     onFrameProcessed({
       change,
       hasContent: content,
-      isStable: !!stableStart && now - stableStart >= config.STABLE_DURATION,
+      isStable,
+      stableCount,
       fps: Math.round(1000 / config.FRAME_INTERVAL),
     });
   }
+
+  // 更新上一帧
+  lastFrameData = pixelData;
 }
 
 /**
  * 检查是否满足触发识别的条件。
- * 必须在 processFrame() 之后调用（依赖已更新的 lastFrameData）。
+ * 必须在 processFrame() 之后调用。
+ *
+ * 触发条件：
+ *   1. 不在处理中状态
+ *   2. 冷却时间已过
+ *   3. 检测到内容
+ *   4. 连续稳定帧数达标
+ *   5. 与上一识别帧不完全相同（防重复）
  */
 export function isReadyToCapture(video, rect) {
   const now = Date.now();
-  // 防止在识别过程中重复触发
   const state = getState();
+
+  // 条件 1：不在处理中
   if (state === State.PROCESSING || state === State.CAPTURING || state === State.MATCHING) {
-    return false;
+    return { ready: false, reason: 'processing' };
   }
-  // 冷却期内不触发
+
+  // 条件 2：冷却时间
   if (now - lastRecognitionTime < config.COOLDOWN_TIME) {
-    return false;
+    const remaining = Math.ceil((config.COOLDOWN_TIME - (now - lastRecognitionTime)) / 1000);
+    return { ready: false, reason: 'cooldown', remaining };
   }
+
+  // 条件 3 & 4：内容和稳定
   const content = hasContent(lastFrameData, rect.width, rect.height);
-  const isStable = stableStart && now - stableStart >= config.STABLE_DURATION;
-  return content && isStable;
+  const isStable = stableCount >= config.STABLE_FRAME_COUNT - 1;
+
+  if (!content) {
+    return { ready: false, reason: 'no_content' };
+  }
+  if (!isStable) {
+    return { ready: false, reason: 'not_stable', stableCount, required: config.STABLE_FRAME_COUNT - 1 };
+  }
+
+  // 条件 5：防重复（hash 相似度检查）
+  if (lastFrameHash) {
+    const currentHash = computePerceptualHash(lastFrameData, rect.width, rect.height);
+    if (currentHash) {
+      const similarity = hashSimilarity(lastFrameHash, currentHash);
+      if (similarity !== null && similarity > 0.90) {
+        return { ready: false, reason: 'duplicate', similarity: similarity.toFixed(3) };
+      }
+    }
+  }
+
+  return { ready: true, stableCount, change: _lastChange.value };
 }
 
 /**
  * 计算识别框在摄像头画面中的像素坐标。
- * @param {{width, height}} videoSize — 视频实际分辨率
- * @param {{width, height}} displaySize — 视频在页面上的显示尺寸
- * @returns {{x, y, width, height}}
+ * 与 UI.drawFrameOverlay 使用相同的坐标映射逻辑。
  */
 export function computeRect(videoSize, displaySize) {
   const { width: vw, height: vh } = videoSize;
   const { width: dw, height: dh } = displaySize;
 
-  // 保持视频原始宽高比，计算显示区域的实际尺寸
   const scale = Math.min(dw / vw, dh / vh);
   const dispW = vw * scale;
   const dispH = vh * scale;
 
-  // 居中偏移
   const offsetX = (dw - dispW) / 2;
   const offsetY = (dh - dispH) / 2;
 
-  // 识别框相对于视频内容的坐标
   const frameW = dispW * config.FRAME_WIDTH_RATIO;
   const frameH = dispH * config.FRAME_HEIGHT_RATIO;
   const frameX = offsetX + (dispW - frameW) / 2;
   const frameY = offsetY + (dispH - frameH) / 2;
 
-  // 映射到视频原始分辨率
   const scaleX = vw / dispW;
   const scaleY = vh / dispH;
 
@@ -336,7 +370,6 @@ function getCanvas() {
   return _canvas;
 }
 
-/** 将像素数据转为 ImageBitmap（异步，兼容性回退）。 */
 export function toImageBitmapSync(pixelData, width, height) {
   const canvas = getCanvas();
   canvas.width = width;
@@ -356,7 +389,7 @@ export default {
   hashSimilarity,
   computeRect,
   isReadyToCapture,
-  captureFrameForHash: captureFrame, // 供外部获取当前帧像素数据用于 hash
+  captureFrameForHash: captureFrame,
   resetDetection,
   markRecognized,
   onDetectContent,

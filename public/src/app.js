@@ -171,10 +171,10 @@ function startDetectionLoop(videoEl) {
         // 每帧打印状态（仅状态变化时）
         if (curContent !== prevContent || curStable !== prevStable || ready) {
           const logMsg = `state=${state} content=${prevContent}→${curContent} change=${(prevChange*100).toFixed(1)}%→${(curChange*100).toFixed(1)}% stable=${prevStable}→${curStable} ready=${ready}`;
-          console.log(`[SCAN] ${logMsg} rect=${rect.width}x${rect.height}@(${rect.x},${rect.y}) threshold=${config.CHANGE_THRESHOLD} stable_ms=${config.STABLE_DURATION}`);
+          console.log(`[SCAN] ${logMsg} rect=${rect.width}x${rect.height}@(${rect.x},${rect.y}) threshold=${config.CHANGE_THRESHOLD} stable_ms=${config.STABLE_FRAME_COUNT}`);
           if (Trace) {
             Trace.inc('detection');
-            Trace.trace('SCAN', logMsg, `rect=${rect.width}x${rect.height} th=${config.CHANGE_THRESHOLD} stable=${config.STABLE_DURATION}ms`);
+            Trace.trace('SCAN', logMsg, `rect=${rect.width}x${rect.height} th=${config.CHANGE_THRESHOLD} stable=${config.STABLE_FRAME_COUNT}ms`);
           }
         }
 

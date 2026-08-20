@@ -6,7 +6,7 @@
  *   CAMERA_READY    — 摄像头就绪，等待题目
  *   SEARCHING       — 正在搜索题目（首次进入识别框）
  *   DETECTING       — 检测到画面有变化
- *   STABILIZING     — 画面持续稳定中
+ *   STABILIZING     — 画面持续稳定中（连续 N 帧相似）
  *   CAPTURING       — 截取最佳帧（极短）
  *   MATCHING        — OCR 识别 + 本地题库搜索中
  *   PROCESSING      — AI 识别/解题中（兜底链路，暂不使用）
