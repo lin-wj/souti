@@ -1,4 +1,16 @@
 /** [BOOT] public/js/app.js loaded */
+
+// ── debug=trace 诊断模式 ────────────────────────────────────
+const isTraceMode = new URLSearchParams(window.location.search).get('debug') === 'trace';
+if (isTraceMode) {
+  console.log('[BOOT] TRACE MODE activated');
+  import('../src/trace/index.js').then(traceMod => {
+    traceMod.default.init();
+    window.Trace = traceMod.default;
+  }).catch(err => {
+    console.error('[BOOT] Trace module failed:', err);
+  });
+}
 console.log('[BOOT] public/js/app.js loaded');
 
 let bootEl = null;

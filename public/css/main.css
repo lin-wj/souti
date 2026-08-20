@@ -894,3 +894,83 @@ body[data-debug-scan="true"] .scan-frame {
   font-weight: 600;
   margin-left: 8px;
 }
+
+/* ── Trace 诊断面板 ───────────────────────────────────── */
+#trace-panel {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 40vh;
+  background: rgba(0, 0, 0, 0.9);
+  border-top: 2px solid #4ADE80;
+  z-index: 99999;
+  display: flex;
+  flex-direction: column;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+}
+
+.trace-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(74, 222, 128, 0.15);
+  border-bottom: 1px solid rgba(74, 222, 128, 0.3);
+  flex-shrink: 0;
+}
+
+.trace-title {
+  color: #4ADE80;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.trace-counters {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+}
+
+.trace-counters span {
+  color: #94a3b8;
+}
+
+.trace-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.trace-actions button {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #f1f5f9;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.trace-actions button:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+#trace-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+  color: #94a3b8;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+#trace-log::-webkit-scrollbar {
+  width: 6px;
+}
+
+#trace-log::-webkit-scrollbar-thumb {
+  background: rgba(74, 222, 128, 0.3);
+  border-radius: 3px;
+}

@@ -18,6 +18,8 @@ import UI from './ui/index.js';
 import State from './state/machine.js';
 import { setState, getDebugInfo, getState } from './state/store.js';
 
+let Trace = null;
+
 console.log('[APP] src/app.js loaded');
 console.log('[APP] navigator.mediaDevices:', typeof navigator.mediaDevices);
 console.log('[APP] getUserMedia:', typeof navigator.mediaDevices?.getUserMedia);
@@ -35,6 +37,19 @@ let lastOCRTimer = 0;
 // ── 初始化 ────────────────────────────────────────────────
 export async function init() {
   console.log('[APP] init start');
+  
+  // 加载 trace 模块
+  if (new URLSearchParams(window.location.search).get('debug') === 'trace') {
+    try {
+      const traceMod = await import('./trace/index.js');
+      Trace = traceMod.default;
+      Trace.init();
+      console.log('[APP] trace mode enabled');
+    } catch(e) {
+      console.error('[APP] trace init failed:', e);
+    }
+  }
+  
   UI.init();
   console.log('[APP] UI.init() done, calling startCameraLoop()');
   await startCameraLoop();
@@ -149,10 +164,12 @@ function startDetectionLoop(videoEl) {
 
         // 每帧打印状态（仅状态变化时）
         if (curContent !== prevContent || curStable !== prevStable || ready) {
-          console.log(
-            `[SCAN] frame state=${state} content=${prevContent}→${curContent} change=${(prevChange*100).toFixed(1)}%→${(curChange*100).toFixed(1)}% stable=${prevStable}→${curStable} ready=${ready}`,
-            `rect=${rect.width}x${rect.height}@(${rect.x},${rect.y})`
-          );
+          const logMsg = `state=${state} content=${prevContent}→${curContent} change=${(prevChange*100).toFixed(1)}%→${(curChange*100).toFixed(1)}% stable=${prevStable}→${curStable} ready=${ready}`;
+          console.log(`[SCAN] ${logMsg} rect=${rect.width}x${rect.height}@(${rect.x},${rect.y}) threshold=${config.CHANGE_THRESHOLD} stable_ms=${config.STABLE_DURATION}`);
+          if (Trace) {
+            Trace.inc('detection');
+            Trace.trace('SCAN', logMsg, `rect=${rect.width}x${rect.height} th=${config.CHANGE_THRESHOLD} stable=${config.STABLE_DURATION}ms`);
+          }
         }
 
         if (ready) {
@@ -238,7 +255,9 @@ function stopOCRDetectionLoop() {
  * 触发截取和 AI 识别。
  */
 async function triggerCapture(videoEl, rect) {
-  console.log('[CAPTURE] started, state:', getState(), 'rect:', rect);
+  console.log('[CAPTURE] started, state:', getState(), 'rect:', JSON.stringify(rect));
+  if (Trace) Trace.trace('CAPTURE', 'started', 'state=', getState(), 'rect=', JSON.stringify(rect));
+  Trace?.inc('capture');
   setState(State.CAPTURING, { source: 'triggerCapture' });
   try {
     // Step 1: 截取扫描框区域
