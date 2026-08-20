@@ -312,7 +312,9 @@ if (ocrMode) {
     });
   }).catch(err => {
     console.error('[BOOT] module import failed:', err);
-    setBootStatus('IMPORT ERR', '#f00');
+    console.error('[BOOT] err.stack:', err?.stack);
+    console.error('[BOOT] err.cause:', err?.cause);
+    setBootStatus('IMPORT ERR: ' + (err?.message || String(err)), '#f00');
   });
 
   import('../src/ui/import-panel.js').then(mod => {
