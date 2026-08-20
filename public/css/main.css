@@ -887,3 +887,10 @@ body[data-debug-scan="true"] .scan-frame {
   letter-spacing: 0.05em;
   margin-bottom: 6px;
 }
+
+.result-source {
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 600;
+  margin-left: 8px;
+}

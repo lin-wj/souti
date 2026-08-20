@@ -223,6 +223,35 @@ export function showResult(result) {
   }
 }
 
+/**
+ * 显示题库匹配结果（仅展示题库数据，不调用 AI）。
+ * @param {{question: object, matchType: string, confidence: number}} data
+ */
+export function showDatabaseResult(data) {
+  if (!els.resultContainer || !data || !data.question) return;
+
+  const q = data.question;
+  els.resultQuestion.textContent = q.text || '题目已识别';
+  els.resultAnswer.textContent = q.answer || '';
+  els.resultExplanation.textContent = '';
+  els.resultSubject.textContent = q.type === 'true_false' ? '判断题'
+    : q.type === 'single_choice' ? '单选题'
+    : q.type === 'multiple_choice' ? '多选题' : '';
+  els.resultConfidence.textContent = data.confidence != null
+    ? `匹配度: ${(data.confidence * 100).toFixed(0)}%` : '';
+
+  // 来源标识
+  const sourceEl = document.getElementById('result-source');
+  if (sourceEl) {
+    sourceEl.textContent = data.matchType === 'exact' ? '题库答案 · 精确匹配' : '题库答案 · 模糊匹配';
+    sourceEl.style.display = 'inline';
+  }
+
+  els.errorHint.textContent = '';
+  els.resultContainer.className = 'result-container visible success';
+  console.log('[UI] showDatabaseResult:', data.matchType, data.confidence.toFixed(3));
+}
+
 export function hideResult() {
   if (els.resultContainer) {
     els.resultContainer.classList.remove('visible');
@@ -268,6 +297,7 @@ export default {
   setVideoElement,
   drawFrameOverlay,
   showResult,
+  showDatabaseResult,
   hideResult,
   showError,
   updateDebugFPS,

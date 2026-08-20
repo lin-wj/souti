@@ -12,8 +12,8 @@ import config from './config.js';
 import Camera from './camera/index.js';
 import Detection, { _lastChange, _lastHasContent, _lastIsStable } from './detection/index.js';
 import Processing from './processing/index.js';
-import { solveQuestion, ErrorCode } from './provider/index.js';
 import OCR from './ocr/index.js';
+import Search from './search/index.js';
 import UI from './ui/index.js';
 import State from './state/machine.js';
 import { setState, getDebugInfo, getState } from './state/store.js';
@@ -224,62 +224,110 @@ function stopOCRDetectionLoop() {
 async function triggerCapture(videoEl, rect) {
   setState(State.CAPTURING, { source: 'triggerCapture' });
   try {
-    const { base64 } = await Processing.extractAndCompress(videoEl, rect);
-    setState(State.PROCESSING, { source: 'triggerCapture' });
-    abortController = new AbortController();
-    const result = await solveQuestion(base64, abortController.signal);
-    if (!result.success) {
-      setState(State.AI_ERROR, { error_code: result.error_code, error: result.error, source: 'solveQuestion' });
-      UI.showResult(result);
+    // Step 1: 截取扫描框区域
+    const frameData = Detection.captureFrameForHash(videoEl, rect);
+    if (!frameData) {
+      console.warn('[App] No frame data captured');
+      setState(State.NO_CONTENT, { source: 'triggerCapture' });
       return;
     }
-    const frameData = Detection.captureFrameForHash(videoEl, rect);
-    const hash = frameData ? Detection.computePerceptualHash(frameData, rect.width, rect.height) : null;
+
+    // Step 2: 转换为 canvas 供 OCR 使用
+    const captureCanvas = document.createElement('canvas');
+    captureCanvas.width = rect.width;
+    captureCanvas.height = rect.height;
+    const ctx = captureCanvas.getContext('2d');
+    ctx.putImageData(new ImageData(frameData, rect.width, rect.height), 0, 0);
+
+    // Step 3: OCR 识别（原始 + 预处理双策略）
+    const preprocessed = preprocessCanvas(captureCanvas);
+    const [origResult, preResult] = await Promise.all([
+      OCR.recognize(captureCanvas),
+      OCR.recognize(preprocessed),
+    ]);
+
+    // 选择更好的 OCR 结果
+    const ocrText = (preResult.confidence ?? 0) > (origResult.confidence ?? 0)
+      ? preResult.text : origResult.text;
+    const ocrConfidence = (preResult.confidence ?? 0) > (origResult.confidence ?? 0)
+      ? preResult.confidence : origResult.confidence;
+
+    console.log(`[App] OCR: "${ocrText.substring(0, 40)}..." conf=${ocrConfidence?.toFixed(1)}%`);
+
+    if (!ocrText) {
+      console.warn('[App] OCR returned empty text');
+      setState(State.NO_CONTENT, { source: 'triggerCapture' });
+      return;
+    }
+
+    // Step 4: 题库搜索
+    const searchResult = await Search.search(ocrText);
+
+    // Step 5: 更新去重状态
+    const hash = Detection.computePerceptualHash(frameData, rect.width, rect.height);
     Detection.markRecognized(hash);
     Detection.resetDetection();
-    setState(State.SHOWING_RESULT, { result, source: 'triggerCapture' });
-    UI.showResult(result);
-    setTimeout(() => { setState(State.WAITING_FOR_CHANGE, { source: 'triggerCapture' }); }, 500);
+
+    if (searchResult.question) {
+      // 匹配成功
+      setState(State.SHOWING_RESULT, { source: 'triggerCapture' });
+      UI.showDatabaseResult({
+        question: searchResult.question,
+        matchType: searchResult.matchType,
+        confidence: searchResult.confidence,
+      });
+      setTimeout(() => {
+        setState(State.WAITING_FOR_CHANGE, { source: 'triggerCapture' });
+      }, 500);
+    } else {
+      // 未匹配
+      setState(State.NO_CONTENT, { source: 'triggerCapture' });
+      // TODO Phase 2F: AI 兜底
+      console.log('[App] 题库未匹配，暂不调用 AI 兜底');
+    }
   } catch (err) {
     console.error('[App] Capture error:', err);
     if (err.name !== 'AbortError') {
       setState(State.AI_ERROR, { error: err.message, source: 'triggerCapture.catch' });
-      UI.showResult({ success: false, error: err.message, error_code: ErrorCode.UNKNOWN });
+      UI.showResult({ success: false, error: err.message, error_code: 'ai_failed' });
     }
-  } finally {
-    abortController = null;
   }
 }
 
 /**
- * 监听窗口大小变化，重绘识别框。
+ * 对 canvas 进行 OCR 预处理（与 debug=ocr 模式相同的预处理逻辑）
  */
-function setupResizeObserver(videoEl) {
-  if (resizeObserver) resizeObserver.disconnect();
-  resizeObserver = new ResizeObserver(() => {
-    const videoSize = Camera.getVideoDimensions();
-    if (!videoSize) return;
-    const displayEl = document.getElementById('video-container');
-    if (!displayEl) return;
-    const displaySize = { width: displayEl.clientWidth, height: displayEl.clientHeight };
-    const rect = Detection.computeRect(videoSize, displaySize);
-    UI.drawFrameOverlay(rect, videoSize, displaySize);
-  });
-  const videoContainer = document.getElementById('video-container');
-  if (videoContainer) { resizeObserver.observe(videoContainer); }
-}
+function preprocessCanvas(src) {
+  try {
+    // 2x 放大
+    const upscaled = document.createElement('canvas');
+    upscaled.width = src.width * 2;
+    upscaled.height = src.height * 2;
+    const uctx = upscaled.getContext('2d');
+    uctx.imageSmoothingEnabled = true;
+    uctx.imageSmoothingQuality = 'high';
+    uctx.drawImage(src, 0, 0, upscaled.width, upscaled.height);
 
-/**
- * 停止所有运行中的任务。
- */
-export function destroy() {
-  running = false;
-  stopDetectionLoop();
-  stopOCRDetectionLoop();
-  if (abortController) { abortController.abort(); abortController = null; }
-  Camera.stopCamera();
-  if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null; }
-  OCR.destroy();
+    // 灰度 + 对比度增强
+    const enhanced = document.createElement('canvas');
+    enhanced.width = upscaled.width;
+    enhanced.height = upscaled.height;
+    const ectx = enhanced.getContext('2d', { willReadFrequently: true });
+    ectx.drawImage(upscaled, 0, 0);
+    const imageData = ectx.getImageData(0, 0, enhanced.width, enhanced.height);
+    const data = imageData.data;
+    const factor = (259 * (1.8 + 1)) / (259 - 1.8); // contrast=1.8
+    for (let i = 0; i < data.length; i += 4) {
+      const gray = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
+      const val = Math.min(255, Math.max(0, factor * (gray - 128) + 128 + 10));
+      data[i] = data[i+1] = data[i+2] = val;
+    }
+    ectx.putImageData(imageData, 0, 0);
+    return enhanced;
+  } catch (e) {
+    console.warn('[App] preprocessCanvas failed:', e);
+    return src;
+  }
 }
 
 export default { init, destroy };
