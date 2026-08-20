@@ -19,8 +19,6 @@ setBootStatus('BOOT OK');
 function getVideoDisplayRect() {
   const video = document.getElementById('video');
   if (!video) return null;
-  // video 在 #video-container 中居中，object-fit: contain
-  // 实际显示区域 = min(containerW/videoW, containerH/videoH) * videoSize
   const container = document.getElementById('video-container');
   if (!container) return null;
   const dims = { width: video.videoWidth, height: video.videoHeight };
@@ -38,8 +36,6 @@ function computeScanFrameVideoRect() {
   const vidRect = getVideoDisplayRect();
   if (!frame || !vidRect) return null;
   const f = frame.getBoundingClientRect();
-  // scan-frame 是 fixed，相对于 viewport
-  // video 显示区域相对于 viewport 的左上角 = vidRect.x, vidRect.y
   const scaleX = vidRect.videoW / vidRect.width;
   const scaleY = vidRect.videoH / vidRect.height;
   return {
@@ -61,8 +57,13 @@ if (ocrMode) {
   const ocrPanel = document.getElementById('ocr-panel');
   const ocrStatus = document.getElementById('ocr-status');
   const ocrBtn = document.getElementById('ocr-btn');
-  const ocrTextEl = document.getElementById('ocr-text');
-  const ocrMetaEl = document.getElementById('ocr-meta');
+  const ocrTextRaw = document.getElementById('ocr-text-raw');
+  const ocrMetaRaw = document.getElementById('ocr-meta-raw');
+  const ocrTextPre = document.getElementById('ocr-text-pre');
+  const ocrMetaPre = document.getElementById('ocr-meta-pre');
+  const ocrRecommend = document.getElementById('ocr-recommend');
+  const ocrTextRec = document.getElementById('ocr-text-rec');
+  const ocrMetaRec = document.getElementById('ocr-meta-rec');
 
   if (ocrPanel) ocrPanel.style.display = 'block';
 
@@ -100,17 +101,21 @@ if (ocrMode) {
 
   // 加载 OCR 模块
   let OcrMod = null;
-  import('../src/ocr/index.js').then(mod => {
-    OcrMod = mod.default;
-    console.log('[OCR] module loaded, ready for init on first use');
+  // 加载预处理模块
+  let PreprocessMod = null;
+  Promise.all([
+    import('../src/ocr/index.js').then(mod => { OcrMod = mod.default; }),
+    import('../src/ocr/preprocess.js').then(mod => { PreprocessMod = mod.default; }),
+  ]).then(() => {
+    console.log('[OCR] modules loaded, ready for recognition');
   }).catch(err => {
-    console.error('[BOOT] OCR module import failed:', err);
+    console.error('[BOOT] OCR/preprocess module import failed:', err);
   });
 
-  // 开始识别按钮
+  // 开始识别按钮 — 双策略 OCR
   ocrBtn.addEventListener('click', async () => {
-    if (!OcrMod) {
-      console.error('[OCR] module not loaded');
+    if (!OcrMod || !PreprocessMod) {
+      console.error('[OCR] modules not loaded');
       return;
     }
 
@@ -130,45 +135,107 @@ if (ocrMode) {
     console.log('[OCR] capture rect:', rect);
     setOcrStatus('状态：正在识别…', 'recognizing');
     ocrBtn.disabled = true;
-    ocrTextEl.textContent = '';
-    ocrMetaEl.textContent = '';
+
+    // 清空显示
+    ocrTextRaw.textContent = '';
+    ocrMetaRaw.textContent = '';
+    ocrTextPre.textContent = '';
+    ocrMetaPre.textContent = '';
+    ocrRecommend.style.display = 'none';
 
     try {
-      // 截取扫描框区域
-      const canvas = document.createElement('canvas');
-      canvas.width = rect.width;
-      canvas.height = rect.height;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(videoEl, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
+      // 截取扫描框区域（原图）
+      const srcCanvas = document.createElement('canvas');
+      srcCanvas.width = rect.width;
+      srcCanvas.height = rect.height;
+      const sctx = srcCanvas.getContext('2d');
+      sctx.drawImage(videoEl, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
 
-      // 执行 OCR
-      setOcrStatus('状态：OCR 引擎初始化中…', 'loading');
-      const result = await OcrMod.recognize(canvas);
-
-      if (ocrTextEl) ocrTextEl.textContent = result.text || '(无识别结果)';
-      if (ocrMetaEl) {
+      // ── 策略 1：原始图直接 OCR ───────────────────────────
+      const origResult = await OcrMod.recognize(srcCanvas);
+      if (ocrTextRaw) ocrTextRaw.textContent = origResult.text || '(无识别结果)';
+      if (ocrMetaRaw) {
         const parts = [];
-        parts.push(`耗时 ${result.elapsed}ms`);
-        if (result.confidence != null) parts.push(`置信 ${result.confidence.toFixed(1)}%`);
-        if (result.error) parts.push('错误: ' + result.error);
-        ocrMetaEl.textContent = parts.join('  ');
+        parts.push(`耗时 ${origResult.elapsed}ms`);
+        if (origResult.confidence != null) parts.push(`置信 ${origResult.confidence.toFixed(1)}%`);
+        if (origResult.error) parts.push('错误: ' + origResult.error);
+        ocrMetaRaw.textContent = parts.join('  ');
+      }
+      console.log('[OCR] original result:', origResult);
+
+      // ── 策略 2：预处理后 OCR ─────────────────────────────
+      const preResult = await OcrMod.recognize(PreprocessMod.preprocess(srcCanvas, {
+        upscale: true,       // 2x 放大
+        contrast: 1.8,       // 对比度增强
+        brightness: 10,      // 轻微提亮
+        binary: false,       // 暂不二值化（保留灰度细节）
+      }));
+      if (ocrTextPre) ocrTextPre.textContent = preResult.text || '(无识别结果)';
+      if (ocrMetaPre) {
+        const parts = [];
+        parts.push(`耗时 ${preResult.elapsed}ms`);
+        if (preResult.confidence != null) parts.push(`置信 ${preResult.confidence.toFixed(1)}%`);
+        if (preResult.error) parts.push('错误: ' + preResult.error);
+        ocrMetaPre.textContent = parts.join('  ');
+      }
+      console.log('[OCR] preprocessed result:', preResult);
+
+      // ── 自动选择推荐结果 ─────────────────────────────────
+      // 优先选择置信度更高的，如果接近则选原文更长的
+      let bestResult, bestLabel;
+      if (origResult.confidence != null && preResult.confidence != null) {
+        if (preResult.confidence > origResult.confidence) {
+          bestResult = preResult;
+          bestLabel = '预处理';
+        } else if (origResult.confidence > preResult.confidence) {
+          bestResult = origResult;
+          bestLabel = '原始';
+        } else {
+          // 置信度相同，选文本更长的
+          bestResult = origResult.text.length >= preResult.text.length ? origResult : preResult;
+          bestLabel = origResult.text.length >= preResult.text.length ? '原始' : '预处理';
+        }
+      } else if (origResult.text && !preResult.text) {
+        bestResult = origResult;
+        bestLabel = '原始';
+      } else if (preResult.text && !origResult.text) {
+        bestResult = preResult;
+        bestLabel = '预处理';
+      } else {
+        bestResult = origResult;
+        bestLabel = '原始';
       }
 
-      if (result.text) {
+      if (bestResult.text) {
+        ocrRecommend.style.display = 'block';
+        if (ocrTextRec) ocrTextRec.textContent = bestResult.text;
+        if (ocrMetaRec) {
+          const parts = [];
+          parts.push(`来源: ${bestLabel}`);
+          parts.push(`耗时 ${bestResult.elapsed}ms`);
+          if (bestResult.confidence != null) parts.push(`置信 ${bestResult.confidence.toFixed(1)}%`);
+          ocrMetaRec.textContent = parts.join('  ');
+        }
         setOcrStatus('状态：识别完成', 'success');
       } else {
         setOcrStatus('状态：未识别到文字', 'error');
       }
-      console.log('[OCR] result:', result);
+
+      // 总耗时
+      const totalElapsed = Math.round(performance.now() - (ocrBtn.__clickTime || performance.now()));
+      console.log(`[OCR] total time: ${totalElapsed}ms (original: ${origResult.elapsed}ms, pre: ${preResult.elapsed}ms)`);
+
     } catch (err) {
       console.error('[OCR] recognition error:', err);
-      if (ocrTextEl) ocrTextEl.textContent = '(识别失败: ' + err.message + ')';
-      if (ocrMetaEl) ocrMetaEl.textContent = '错误: ' + err.message;
+      if (ocrTextRaw) ocrTextRaw.textContent = '(识别失败: ' + err.message + ')';
       setOcrStatus('状态：识别失败', 'error');
     } finally {
       ocrBtn.disabled = false;
     }
   });
+
+  // 保存点击时间用于计时
+  ocrBtn.addEventListener('mousedown', () => { ocrBtn.__clickTime = performance.now(); });
 
   // 每秒刷新诊断数据
   setInterval(() => {
@@ -204,7 +271,6 @@ if (ocrMode) {
     const rect = frameEl ? frameEl.getBoundingClientRect() : null;
     const readyState = videoEl ? videoEl.readyState : -1;
     const hasStream = !!stream && stream.active;
-
     const diaCamera = document.getElementById('scan-dia-camera');
     const diaVideo = document.getElementById('scan-dia-video');
     const diaFrame = document.getElementById('scan-dia-frame');
@@ -228,7 +294,7 @@ if (ocrMode) {
       setBootStatus('SCAN FAIL: ' + err.name, '#f00');
     });
   }).catch(err => {
-    console.error('[BOOT] Scan mode import failed:', err);
+    console.error('[BOOT] Scan mode module import failed:', err);
     setBootStatus('SCAN IMPORT ERR', '#f00');
   });
 
@@ -253,4 +319,3 @@ if (ocrMode) {
     try { mod.default.init(); } catch(e) { console.warn('[BOOT] ImportPanel init failed:', e); }
   }).catch(() => {});
 }
-// debug=ocr deployed v3 - 1787127394

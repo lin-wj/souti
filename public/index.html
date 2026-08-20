@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>AI 识题</title>
-  <link rel="stylesheet" " href="/css/main.css?v=20250819" />
+  <link rel="stylesheet" href="/css/main.css" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="apple-touch-icon" href="/icons/icon-192.png" />
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js" defer></script>
@@ -46,10 +46,26 @@
       <span id="ocr-status" class="ocr-status">状态：待机</span>
     </div>
     <button id="ocr-btn" class="ocr-btn">开始识别</button>
-    <div id="ocr-result" class="ocr-result">
-      <div class="ocr-result-label">OCR 原始文本：</div>
-      <pre id="ocr-text" class="ocr-text"></pre>
-      <div id="ocr-meta" class="ocr-meta"></div>
+
+    <!-- 原始 OCR 结果 -->
+    <div class="ocr-result-group">
+      <div class="ocr-result-label">原始 OCR</div>
+      <pre id="ocr-text-raw" class="ocr-text"></pre>
+      <div id="ocr-meta-raw" class="ocr-meta"></div>
+    </div>
+
+    <!-- 预处理 OCR 结果 -->
+    <div class="ocr-result-group ocr-result-group--processed">
+      <div class="ocr-result-label">预处理 OCR（灰度+增强）</div>
+      <pre id="ocr-text-pre" class="ocr-text"></pre>
+      <div id="ocr-meta-pre" class="ocr-meta"></div>
+    </div>
+
+    <!-- 推荐结果 -->
+    <div id="ocr-recommend" class="ocr-recommend" style="display:none">
+      <div class="ocr-recommend-label">推荐结果</div>
+      <pre id="ocr-text-rec" class="ocr-text ocr-text--rec"></pre>
+      <div id="ocr-meta-rec" class="ocr-meta"></div>
     </div>
   </div>
 
@@ -77,17 +93,12 @@
     <div id="state-display" class="debug-state"></div>
     <div id="debug-content"></div>
     <div id="fps-counter"></div>
-    <div id="ocr-debug" class="ocr-debug" style="display:none">
-      <div class="ocr-title">📷 OCR 调试</div>
-      <div id="ocr-text" class="ocr-text"></div>
-      <div id="ocr-meta" class="ocr-meta"></div>
-    </div>
   </div>
 
   <!-- 浮动按钮 -->
   <button id="import-trigger" class="import-trigger" title="导入题库">📚</button>
   <button id="debug-trigger" class="debug-trigger" title="切换调试模式">🔍</button>
 
-  <script type="module" src="/js/app.js?v=2"></script>
+  <script type="module" src="/js/app.js?v=20250819b"></script>
 </body>
 </html>
