@@ -330,5 +330,24 @@ function preprocessCanvas(src) {
   }
 }
 
+/**
+ * 停止所有运行中的任务。
+ */
+export function destroy() {
+  running = false;
+  stopDetectionLoop();
+  stopOCRDetectionLoop();
+  if (abortController) {
+    abortController.abort();
+    abortController = null;
+  }
+  Camera.stopCamera();
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+    resizeObserver = null;
+  }
+  OCR.destroy();
+}
+
 export default { init, destroy };
 // debug=ocr deployed v4 - 1787128011
