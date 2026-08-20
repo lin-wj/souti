@@ -21,13 +21,15 @@ import State from '../state/machine.js';
 import { getState } from '../state/store.js';
 
 // ── 内部状态 ──────────────────────────────────────────────
-let lastFrameData = null;        // Uint8ClampedArray — 上一帧像素数据
-let lastFrameHash = null;        // 上一帧的 perceptual hash（用于去重）
-let stableCount = 0;             // 当前连续相似帧计数
-let lastChangeTime = 0;          // 上次检测到明显变化的时间戳
-let lastRecognitionTime = 0;     // 上次触发识别的时间戳（冷却计时）
-let frameCount = 0;              // 总帧计数（调试用）
-let totalProcessed = 0;          // 成功处理的帧数（调试用）
+let lastFrameData = null;           // 上一帧像素数据（用于变化检测）
+let lastFrameHash = null;           // 上一帧的 perceptual hash（用于去重）
+let lastRecognizedFrameData = null; // 上次成功识别时的帧数据（用于换题检测）
+let lastRecognizedHash = null;      // 上次成功识别的 hash（用于重复识别判断）
+let stableCount = 0;                // 当前连续相似帧计数
+let lastChangeTime = 0;             // 上次检测到明显变化的时间戳
+let lastRecognitionTime = 0;        // 上次触发识别的时间戳（冷却计时）
+let frameCount = 0;                 // 总帧计数（调试用）
+let totalProcessed = 0;             // 成功处理的帧数（调试用）
 
 // ── 调试导出 ──────────────────────────────────────────────
 export const _lastChange = { value: 0 };
@@ -48,21 +50,26 @@ export function onFrameProcessedCallback(fn) { onFrameProcessed = fn; }
 
 /**
  * 重置检测状态（识别成功后调用）。
- * 进入 WAITING_FOR_CHANGE 后重置，等待新题目。
+ * 注意：不清除 lastFrameData，保持变化检测连续性。
+ * 只清除 lastRecognizedFrameData，允许新题目触发识别。
  */
 export function resetDetection() {
-  lastFrameData = null;
-  lastFrameHash = null;
+  // 不清除 lastFrameData — 保持与上一帧的变化检测
+  // 不清除 lastFrameHash — 用于下一题的重复判断
+  lastRecognizedFrameData = null;  // 清除已识别帧，允许新题目触发
+  lastRecognizedHash = null;
   stableCount = 0;
   lastRecognitionTime = Date.now();
-  console.log('[Detection] resetDetection: cooldown reset, recognitionTime=' + lastRecognitionTime);
+  console.log('[Detection] resetDetection: cooldown reset, recognizedFrame cleared');
 }
 
 /**
  * 标记当前帧已被识别，更新冷却时间和 hash。
+ * 同时保存当前帧作为"已识别帧"，用于后续重复判断。
  */
 export function markRecognized(hash) {
   lastFrameHash = hash;
+  lastRecognizedHash = hash;
   lastRecognitionTime = Date.now();
   stableCount = 0;
   console.log('[Detection] markRecognized: hash=', hash?.substring(0, 8), 'cooldownUntil=', lastRecognitionTime + config.COOLDOWN_TIME);
@@ -263,6 +270,18 @@ export function processFrame(video, rect) {
   // 稳定指示器：当稳定计数接近目标时标记为稳定
   const isStable = stableCount >= config.STABLE_FRAME_COUNT - 1;
   _lastIsStable.value = isStable;
+  
+  // 当稳定计数达标时，保存当前帧数据用于后续去重判断
+  // 这样 triggerCapture 调用 markRecognized 时可以使用这个 hash
+  if (isStable && !lastRecognizedHash) {
+    // 第一次稳定，计算 hash 并保存
+    const hash = computePerceptualHash(pixelData, width, height);
+    if (hash) {
+      lastRecognizedFrameData = pixelData;
+      lastRecognizedHash = hash;
+      console.log('[Detection] stable frame captured, hash=', hash?.substring(0, 8));
+    }
+  }
 
   // ── 4. 通知回调 ────────────────────────────────────────
   if (onFrameProcessed) {
@@ -317,10 +336,12 @@ export function isReadyToCapture(video, rect) {
   }
 
   // 条件 5：防重复（hash 相似度检查）
-  if (lastFrameHash) {
+  // 只有当 lastRecognizedHash 存在时才检查（即已经完成过识别）
+  // 第一次识别时 lastRecognizedHash = null，不检查
+  if (lastRecognizedHash) {
     const currentHash = computePerceptualHash(lastFrameData, rect.width, rect.height);
     if (currentHash) {
-      const similarity = hashSimilarity(lastFrameHash, currentHash);
+      const similarity = hashSimilarity(lastRecognizedHash, currentHash);
       if (similarity !== null && similarity > 0.90) {
         return { ready: false, reason: 'duplicate', similarity: similarity.toFixed(3) };
       }
