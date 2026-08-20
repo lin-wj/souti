@@ -54,13 +54,13 @@ export function onFrameProcessedCallback(fn) { onFrameProcessed = fn; }
  * 只清除 lastRecognizedFrameData，允许新题目触发识别。
  */
 export function resetDetection() {
-  // 不清除 lastFrameData — 保持与上一帧的变化检测
-  // 不清除 lastFrameHash — 用于下一题的重复判断
-  lastRecognizedFrameData = null;  // 清除已识别帧，允许新题目触发
-  lastRecognizedHash = null;
+  // 不清除 lastFrameData — 保持与上一帧的变化检测连续性
+  // 不清除 lastFrameHash — 用于后续帧的重复判断
+  // 不清除 lastRecognizedHash — 防止同一道题重复识别
   stableCount = 0;
   lastRecognitionTime = Date.now();
-  console.log('[Detection] resetDetection: cooldown reset, recognizedFrame cleared');
+  // lastRecognizedFrameData 在换题时由 isReadyToCapture 清除
+  console.log('[Detection] resetDetection: stableCount reset, cooldown started');
 }
 
 /**
@@ -68,10 +68,11 @@ export function resetDetection() {
  * 同时保存当前帧作为"已识别帧"，用于后续重复判断。
  */
 export function markRecognized(hash) {
-  lastFrameHash = hash;
+  // 只有成功 capture 后才设置已识别 hash
   lastRecognizedHash = hash;
+  lastRecognizedFrameData = null; // 清除候选帧，等待新题目
   lastRecognitionTime = Date.now();
-  stableCount = 0;
+  // 不清除 stableCount 和 lastFrameData，保持变化检测连续性
   console.log('[Detection] markRecognized: hash=', hash?.substring(0, 8), 'cooldownUntil=', lastRecognitionTime + config.COOLDOWN_TIME);
 }
 
@@ -271,16 +272,12 @@ export function processFrame(video, rect) {
   const isStable = stableCount >= config.STABLE_FRAME_COUNT - 1;
   _lastIsStable.value = isStable;
   
-  // 当稳定计数达标时，保存当前帧数据用于后续去重判断
-  // 这样 triggerCapture 调用 markRecognized 时可以使用这个 hash
-  if (isStable && !lastRecognizedHash) {
-    // 第一次稳定，计算 hash 并保存
-    const hash = computePerceptualHash(pixelData, width, height);
-    if (hash) {
-      lastRecognizedFrameData = pixelData;
-      lastRecognizedHash = hash;
-      console.log('[Detection] stable frame captured, hash=', hash?.substring(0, 8));
-    }
+  // ── 换题检测：如果当前帧与已识别帧明显不同，清除锁定状态 ──
+  if (lastRecognizedHash && change > config.CHANGE_THRESHOLD * 2) {
+    // 画面发生显著变化，可能是新题目
+    lastRecognizedHash = null;
+    lastRecognizedFrameData = null;
+    console.log('[Detection] new question detected, cleared recognized lock');
   }
 
   // ── 4. 通知回调 ────────────────────────────────────────
@@ -337,13 +334,18 @@ export function isReadyToCapture(video, rect) {
 
   // 条件 5：防重复（hash 相似度检查）
   // 只有当 lastRecognizedHash 存在时才检查（即已经完成过识别）
-  // 第一次识别时 lastRecognizedHash = null，不检查
+  // 第一次识别时 lastRecognizedHash = null，直接允许
   if (lastRecognizedHash) {
     const currentHash = computePerceptualHash(lastFrameData, rect.width, rect.height);
     if (currentHash) {
       const similarity = hashSimilarity(lastRecognizedHash, currentHash);
       if (similarity !== null && similarity > 0.90) {
         return { ready: false, reason: 'duplicate', similarity: similarity.toFixed(3) };
+      }
+      // 相似度低说明是新题目，清除锁定状态
+      if (similarity < 0.7) {
+        lastRecognizedHash = null;
+        lastRecognizedFrameData = null;
       }
     }
   }
