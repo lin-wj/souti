@@ -117,6 +117,7 @@ async function startCameraLoop() {
  */
 function startDetectionLoop(videoEl) {
   stopDetectionLoop();
+  console.log('[SCAN] detection loop started');
 
   const loop = () => {
     if (!running) return;
@@ -135,11 +136,27 @@ function startDetectionLoop(videoEl) {
 
       if (displaySize) {
         const rect = Detection.computeRect(videoSize, displaySize);
+        const state = getState();
+        const prevContent = Detection['_lastHasContent'].value;
+        const prevChange = Detection['_lastChange'].value;
+        const prevStable = Detection['_lastIsStable'].value;
 
         Detection.processFrame(videoEl, rect);
         const ready = Detection.isReadyToCapture(videoEl, rect);
+        const curContent = Detection['_lastHasContent'].value;
+        const curChange = Detection['_lastChange'].value;
+        const curStable = Detection['_lastIsStable'].value;
+
+        // 每帧打印状态（仅状态变化时）
+        if (curContent !== prevContent || curStable !== prevStable || ready) {
+          console.log(
+            `[SCAN] frame state=${state} content=${prevContent}→${curContent} change=${(prevChange*100).toFixed(1)}%→${(curChange*100).toFixed(1)}% stable=${prevStable}→${curStable} ready=${ready}`,
+            `rect=${rect.width}x${rect.height}@(${rect.x},${rect.y})`
+          );
+        }
 
         if (ready) {
+          console.log('[SCAN] ready=true → triggerCapture');
           triggerCapture(videoEl, rect);
         }
 
@@ -159,7 +176,6 @@ function startDetectionLoop(videoEl) {
         }
       }
     } catch (err) {
-      // 检测循环错误只打日志，绝不改状态
       console.error('[App] Detection loop error (state unchanged):', err.name, err.message);
       console.error('[App] Stack:', err.stack);
     }
@@ -222,15 +238,17 @@ function stopOCRDetectionLoop() {
  * 触发截取和 AI 识别。
  */
 async function triggerCapture(videoEl, rect) {
+  console.log('[CAPTURE] started, state:', getState(), 'rect:', rect);
   setState(State.CAPTURING, { source: 'triggerCapture' });
   try {
     // Step 1: 截取扫描框区域
     const frameData = Detection.captureFrameForHash(videoEl, rect);
     if (!frameData) {
-      console.warn('[App] No frame data captured');
+      console.warn('[CAPTURE] No frame data captured');
       setState(State.NO_CONTENT, { source: 'triggerCapture' });
       return;
     }
+    console.log('[CAPTURE] frame captured:', frameData.length, 'bytes, rect:', rect.width, 'x', rect.height);
 
     // Step 2: 转换为 canvas 供 OCR 使用
     const captureCanvas = document.createElement('canvas');
@@ -238,13 +256,17 @@ async function triggerCapture(videoEl, rect) {
     captureCanvas.height = rect.height;
     const ctx = captureCanvas.getContext('2d');
     ctx.putImageData(new ImageData(frameData, rect.width, rect.height), 0, 0);
+    console.log('[CAPTURE] canvas created:', captureCanvas.width, 'x', captureCanvas.height);
 
     // Step 3: OCR 识别（原始 + 预处理双策略）
     const preprocessed = preprocessCanvas(captureCanvas);
+    console.log('[OCR] starting recognition...');
     const [origResult, preResult] = await Promise.all([
       OCR.recognize(captureCanvas),
       OCR.recognize(preprocessed),
     ]);
+    console.log('[OCR] done. orig:', origResult.elapsed, 'ms conf=' + (origResult.confidence ?? 'null'), 'text:', JSON.stringify(origResult.text)?.substring(0, 60));
+    console.log('[OCR] pre:', preResult.elapsed, 'ms conf=' + (preResult.confidence ?? 'null'), 'text:', JSON.stringify(preResult.text)?.substring(0, 60));
 
     // 选择更好的 OCR 结果
     const ocrText = (preResult.confidence ?? 0) > (origResult.confidence ?? 0)
@@ -252,16 +274,18 @@ async function triggerCapture(videoEl, rect) {
     const ocrConfidence = (preResult.confidence ?? 0) > (origResult.confidence ?? 0)
       ? preResult.confidence : origResult.confidence;
 
-    console.log(`[App] OCR: "${ocrText.substring(0, 40)}..." conf=${ocrConfidence?.toFixed(1)}%`);
+    console.log(`[OCR] selected: "${ocrText?.substring(0, 40)}..." conf=${ocrConfidence?.toFixed(1)}%`);
 
     if (!ocrText) {
-      console.warn('[App] OCR returned empty text');
+      console.warn('[CAPTURE] OCR returned empty text');
       setState(State.NO_CONTENT, { source: 'triggerCapture' });
       return;
     }
 
     // Step 4: 题库搜索
+    console.log('[SEARCH] querying:', JSON.stringify(ocrText)?.substring(0, 80));
     const searchResult = await Search.search(ocrText);
+    console.log('[SEARCH] result:', searchResult.matchType, 'confidence:', searchResult.confidence?.toFixed(3), searchResult.question ? 'FOUND: ' + searchResult.question.text.substring(0, 40) : 'NOT FOUND');
 
     // Step 5: 更新去重状态
     const hash = Detection.computePerceptualHash(frameData, rect.width, rect.height);
@@ -270,6 +294,7 @@ async function triggerCapture(videoEl, rect) {
 
     if (searchResult.question) {
       // 匹配成功
+      console.log('[UI] showing database result, type:', searchResult.matchType);
       setState(State.SHOWING_RESULT, { source: 'triggerCapture' });
       UI.showDatabaseResult({
         question: searchResult.question,
@@ -277,16 +302,18 @@ async function triggerCapture(videoEl, rect) {
         confidence: searchResult.confidence,
       });
       setTimeout(() => {
+        console.log('[STATE] transitioning to WAITING_FOR_CHANGE');
         setState(State.WAITING_FOR_CHANGE, { source: 'triggerCapture' });
       }, 500);
     } else {
       // 未匹配
+      console.log('[CAPTURE] 题库未匹配，暂不调用 AI 兜底');
       setState(State.NO_CONTENT, { source: 'triggerCapture' });
       // TODO Phase 2F: AI 兜底
-      console.log('[App] 题库未匹配，暂不调用 AI 兜底');
     }
   } catch (err) {
-    console.error('[App] Capture error:', err);
+    console.error('[CAPTURE] error:', err.name, err.message);
+    console.error('[CAPTURE] stack:', err.stack);
     if (err.name !== 'AbortError') {
       setState(State.AI_ERROR, { error: err.message, source: 'triggerCapture.catch' });
       UI.showResult({ success: false, error: err.message, error_code: 'ai_failed' });
