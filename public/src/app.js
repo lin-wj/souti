@@ -19,8 +19,6 @@ import State from './state/machine.js';
 import { setState, getDebugInfo, getState } from './state/store.js';
 
 console.log('[APP] src/app.js loaded');
-console.log('[APP] step1: imports starting');
-try { eval('import("./config.js").then(()=>console.log("[APP] config OK")).catch(e=>console.error("[APP] config FAIL",e.message))'); } catch(e) { console.error('[APP] eval error:', e.message); }
 console.log('[APP] navigator.mediaDevices:', typeof navigator.mediaDevices);
 console.log('[APP] getUserMedia:', typeof navigator.mediaDevices?.getUserMedia);
 console.log('[APP] location.protocol:', location.protocol);
