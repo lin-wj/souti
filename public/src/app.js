@@ -43,6 +43,7 @@ export async function init() {
     try {
       const traceMod = await import('./trace/index.js');
       Trace = traceMod.default;
+      window.Trace = traceMod.default;  // 同步到全局，供 entry 和其他模块访问
       Trace.init();
       console.log('[APP] trace mode enabled');
     } catch(e) {
@@ -132,10 +133,15 @@ async function startCameraLoop() {
  */
 function startDetectionLoop(videoEl) {
   stopDetectionLoop();
-  console.log('[SCAN] detection loop started');
+  console.log('[SCAN] detection loop ENTERED, videoEl=', !!videoEl, 'running=', running, 'Trace=', !!Trace);
+  if (Trace) Trace.trace('SCAN', 'detection loop ENTERED, videoEl=', !!videoEl, 'running=', running, 'Trace=', !!Trace);
 
   const loop = () => {
-    if (!running) return;
+    if (!running) {
+      if (Trace) Trace.trace('SCAN', 'loop tick SKIPPED: running=false');
+      return;
+    }
+    if (Trace) Trace.trace('SCAN', 'tick running=', running, 'state=', getState(), 'videoW=', Camera.getVideoDimensions()?.width ?? 0);
 
     try {
       const videoSize = Camera.getVideoDimensions();
@@ -215,7 +221,11 @@ function startOCRDetectionLoop(videoEl) {
   const interval = 2000;
 
   const loop = () => {
-    if (!running) return;
+    if (!running) {
+      if (Trace) Trace.trace('SCAN', 'loop tick SKIPPED: running=false');
+      return;
+    }
+    if (Trace) Trace.trace('SCAN', 'tick running=', running, 'state=', getState(), 'videoW=', Camera.getVideoDimensions()?.width ?? 0);
     const state = getState();
     if (state === State.CAMERA_READY || state === State.WAITING_FOR_CHANGE) {
       const now = Date.now();
