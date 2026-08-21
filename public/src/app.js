@@ -33,6 +33,7 @@ let resizeObserver = null;
 let abortController = null;
 let ocrTimer = null;
 let lastOCRTimer = 0;
+let lastBlockedReason = null;  // 跟踪上一个阻塞原因，避免重复日志
 
 // ── 初始化 ────────────────────────────────────────────────
 export async function init() {
@@ -43,8 +44,8 @@ export async function init() {
     try {
       const traceMod = await import('./trace/index.js');
       Trace = traceMod.default;
-      window.Trace = traceMod.default;  // 同步到全局，供 entry 和其他模块访问
-      Trace.init();
+      window.Trace = traceMod.default;
+      Trace.init(config);
       console.log('[APP] trace mode enabled');
     } catch(e) {
       console.error('[APP] trace init failed:', e);
@@ -141,7 +142,13 @@ function startDetectionLoop(videoEl) {
       if (Trace) Trace.trace('SCAN', 'loop tick SKIPPED: running=false');
       return;
     }
-    if (Trace) Trace.trace('SCAN', 'tick running=', running, 'state=', getState(), 'videoW=', Camera.getVideoDimensions()?.width ?? 0);
+    // 每次 tick 都递增计数器（显示循环是否在运行）
+    if (Trace) {
+      Trace.inc('detection');
+      Trace.trace('SCAN', 'tick running=', running, 'state=', getState(), 
+                  'videoW=', Camera.getVideoDimensions()?.width ?? 0,
+                  'rect=', Detection.computeRect(Camera.getVideoDimensions(), {width: 390, height: 844})?.width ?? '?');
+    }
 
     try {
       const videoSize = Camera.getVideoDimensions();
@@ -161,26 +168,73 @@ function startDetectionLoop(videoEl) {
         const prevContent = Detection['_lastHasContent'].value;
         const prevChange = Detection['_lastChange'].value;
         const prevStable = Detection['_lastIsStable'].value;
+        const prevStableCount = Detection['_stableCount'].value;
 
         Detection.processFrame(videoEl, rect);
-        const ready = Detection.isReadyToCapture(videoEl, rect);
+        const readyResult = Detection.isReadyToCapture(videoEl, rect);
+        const ready = readyResult.ready;
+        const reason = readyResult.reason;
+        const similarity = readyResult.similarity;
+        const cooldownRemaining = readyResult.remaining;
+        
         const curContent = Detection['_lastHasContent'].value;
         const curChange = Detection['_lastChange'].value;
         const curStable = Detection['_lastIsStable'].value;
+        const curStableCount = Detection['_stableCount'].value;
 
-        // 每帧打印状态（仅状态变化时）
-        if (curContent !== prevContent || curStable !== prevStable || ready) {
-          const logMsg = `state=${state} content=${prevContent}→${curContent} change=${(prevChange*100).toFixed(1)}%→${(curChange*100).toFixed(1)}% stable=${prevStable}→${curStable} ready=${ready}`;
-          console.log(`[SCAN] ${logMsg} rect=${rect.width}x${rect.height}@(${rect.x},${rect.y}) threshold=${config.CHANGE_THRESHOLD} stable_ms=${config.STABLE_FRAME_COUNT}`);
+        // 计算剩余冷却时间
+        const now = Date.now();
+        const cdRemaining = Math.max(0, config.COOLDOWN_TIME - (now - Detection['_lastRecognitionTime'].value));
+        const lastHash = Detection['_lastRecognizedHash'].value;
+
+        // 更新 trace 实时状态面板
+        if (Trace) {
+          Trace.showState({
+            content: curContent,
+            change: curChange,
+            stable: `${curStableCount}/${config.STABLE_FRAME_COUNT}`,
+            ready: ready,
+            reason: reason,
+            similarity: similarity ?? '-',
+            cooldown: cdRemaining,
+          });
+        }
+
+        // 只在状态变化时追加日志（避免日志爆炸）
+        const contentChanged = curContent !== prevContent;
+        const stableChanged = curStableCount !== prevStableCount;
+        const reasonChanged = (prevContent !== curContent || prevStable !== curStable) && readyResult.reason;
+        const becameReady = !prevContent && curContent && ready;
+
+        if (contentChanged || stableChanged || reasonChanged || becameReady) {
+          const parts = [`state=${state}`, `content=${curContent}`, `change=${(curChange*100).toFixed(1)}%`, 
+                         `stable=${curStableCount}/${config.STABLE_FRAME_COUNT}`, `ready=${ready}`];
+          if (reason) parts.push(`reason=${reason}`);
+          if (similarity) parts.push(`sim=${similarity}`);
+          if (cdRemaining > 0) parts.push(`cd=${Math.ceil(cdRemaining)}ms`);
+          if (lastHash) parts.push(`hash=${lastHash.substring(0, 8)}`);
+          
+          const logMsg = parts.join(' ');
+          console.log(`[SCAN] ${logMsg}`);
           if (Trace) {
-            Trace.inc('detection');
-            Trace.trace('SCAN', logMsg, `rect=${rect.width}x${rect.height} th=${config.CHANGE_THRESHOLD} stable=${config.STABLE_FRAME_COUNT}ms`);
+            Trace.trace('SCAN', logMsg);
           }
         }
 
         if (ready) {
           console.log('[SCAN] ready=true → triggerCapture');
+          if (Trace) Trace.trace('SCAN', 'READY → CAPTURE');
           triggerCapture(videoEl, rect);
+        } else if (reason === 'processing' || reason === 'cooldown') {
+          // 这些是预期中的阻塞，不打日志
+        } else if (reason) {
+          // 非预期的阻塞，记录一次
+          const key = `${state}_${reason}`;
+          if (!lastBlockedReason || lastBlockedReason !== key) {
+            console.log(`[SCAN] blocked: ${reason}`);
+            if (Trace) Trace.trace('SCAN', `blocked: ${reason}`, {stableCount: curStableCount, content: curContent, change: curChange.toFixed(3)});
+            lastBlockedReason = key;
+          }
         }
 
         UI.drawFrameOverlay(rect, videoSize, displaySize);

@@ -36,6 +36,8 @@ export const _lastChange = { value: 0 };
 export const _lastHasContent = { value: false };
 export const _lastIsStable = { value: false };
 export const _stableCount = { value: 0 };
+export const _lastRecognizedHash = { value: null };
+export const _lastRecognitionTime = { value: 0 };
 
 // ── 回调 ─────────────────────────────────────────────────
 let onContent = null;
@@ -72,6 +74,8 @@ export function markRecognized(hash) {
   lastRecognizedHash = hash;
   lastRecognizedFrameData = null; // 清除候选帧，等待新题目
   lastRecognitionTime = Date.now();
+  _lastRecognizedHash.value = hash;
+  _lastRecognitionTime.value = lastRecognitionTime;
   // 不清除 stableCount 和 lastFrameData，保持变化检测连续性
   console.log('[Detection] markRecognized: hash=', hash?.substring(0, 8), 'cooldownUntil=', lastRecognitionTime + config.COOLDOWN_TIME);
 }
@@ -419,4 +423,6 @@ export default {
   onDetectStable,
   onDetectChange,
   onFrameProcessedCallback,
+  _lastRecognizedHash,
+  _lastRecognitionTime,
 };
