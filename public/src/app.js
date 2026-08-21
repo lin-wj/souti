@@ -169,6 +169,8 @@ function startDetectionLoop(videoEl) {
         const prevChange = Detection['_lastChange'].value;
         const prevStable = Detection['_lastIsStable'].value;
         const prevStableCount = Detection['_stableCount'].value;
+        // 跟踪上一个 blocked reason，用于检测 reason 变化
+        const lastBlockedReason = reason;
 
         Detection.processFrame(videoEl, rect);
         const readyResult = Detection.isReadyToCapture(videoEl, rect);
@@ -203,7 +205,8 @@ function startDetectionLoop(videoEl) {
         // 只在状态变化时追加日志（避免日志爆炸）
         const contentChanged = curContent !== prevContent;
         const stableChanged = curStableCount !== prevStableCount;
-        const reasonChanged = prevContent !== curContent || prevStable !== curStable || ready;
+        // reasonChanged: 当 reason 本身发生变化时记录（需要跟踪上一个 reason）
+        const reasonChanged = (lastBlockedReason !== reason) && !!reason;
         const becameReady = !prevContent && curContent && ready;
 
         if (contentChanged || stableChanged || reasonChanged || becameReady) {
@@ -220,6 +223,9 @@ function startDetectionLoop(videoEl) {
             Trace.trace('SCAN', logMsg);
           }
         }
+        
+        // 更新上次 blocked reason（用于下次比较）
+        lastBlockedReason = reason;
 
         if (ready) {
           console.log('[SCAN] ready=true → triggerCapture');
