@@ -7,9 +7,9 @@ export const config = {
    * 连续相似帧确认数。
    * 在 CONTENT_DETECTED 后，需要连续 N 帧相似才触发识别。
    * 值越小触发越快，但可能误触；值越大越稳，但响应慢。
-   * 推荐 3–5（200ms 间隔下对应 600–1000ms）。
+   * 推荐 2（200ms 间隔下对应 400ms）。
    */
-  STABLE_FRAME_COUNT: 3,
+  STABLE_FRAME_COUNT: 2,
 
   /**
    * 画面变化检测阈值（0–1）。
