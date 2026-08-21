@@ -203,7 +203,7 @@ function startDetectionLoop(videoEl) {
         // 只在状态变化时追加日志（避免日志爆炸）
         const contentChanged = curContent !== prevContent;
         const stableChanged = curStableCount !== prevStableCount;
-        const reasonChanged = (prevContent !== curContent || prevStable !== curStable) && readyResult.reason;
+        const reasonChanged = prevContent !== curContent || prevStable !== curStable || ready;
         const becameReady = !prevContent && curContent && ready;
 
         if (contentChanged || stableChanged || reasonChanged || becameReady) {
