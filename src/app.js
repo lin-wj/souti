@@ -196,10 +196,11 @@ function startDetectionLoop(videoEl) {
             change: curChange,
             stable: `${curStableCount}/${config.STABLE_FRAME_COUNT}`,
             changeFromRecognized: Detection['_changeFromRecognized']?.value ?? 0,
+            questionChanged: Detection['_questionChanged']?.value ?? false,
+            questionChangedCount: Detection['_questionChangedCount']?.value ?? 0,
             ready: ready,
             reason: reason,
             similarity: similarity ?? '-',
-            questionChanged: Detection['_questionChanged']?.value ?? false,
             cooldown: cdRemaining,
           });
         }
@@ -369,6 +370,9 @@ async function triggerCapture(videoEl, rect) {
 
     if (!ocrText) {
       console.warn('[CAPTURE] OCR returned empty text');
+      // 启动 cooldown 但不锁定题目
+      Detection.startCooldown();
+      Detection.resetStableState();
       setState(State.NO_CONTENT, { source: 'triggerCapture' });
       return;
     }
@@ -383,8 +387,8 @@ async function triggerCapture(videoEl, rect) {
     
     if (searchResult.question) {
       // 匹配成功：锁定题目，进入冷却
-      Detection.markRecognized(hash);
-      Detection.resetDetection();
+      Detection.markRecognized(hash, frameData);
+      Detection.resetStableState();
       
       console.log('[UI] showing database result, type:', searchResult.matchType);
       setState(State.SHOWING_RESULT, { source: 'triggerCapture' });
@@ -398,7 +402,9 @@ async function triggerCapture(videoEl, rect) {
         setState(State.WAITING_FOR_CHANGE, { source: 'triggerCapture' });
       }, 500);
     } else {
-      // 未匹配：不锁定，允许 cooldown 后重试
+      // 未匹配：启动 cooldown 但不锁定
+      Detection.startCooldown();
+      Detection.resetStableState();
       console.log('[CAPTURE] 题库未匹配，暂不调用 AI 兜底');
       setState(State.NO_CONTENT, { source: 'triggerCapture' });
       // TODO Phase 2F: AI 兜底

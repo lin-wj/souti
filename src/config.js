@@ -7,7 +7,7 @@ export const config = {
    * 连续相似帧确认数。
    * 在 CONTENT_DETECTED 后，需要连续 N 帧相似才触发识别。
    * 值越小触发越快，但可能误触；值越大越稳，但响应慢。
-   * 推荐 2（200ms 间隔下对应 400ms）。
+   * 推荐 2（200ms 间隔下对应 200ms）。
    */
   STABLE_FRAME_COUNT: 2,
 
@@ -17,7 +17,23 @@ export const config = {
    * 值越小越敏感，越大越宽松。
    * 推荐 0.08–0.12（允许手持轻微晃动）。
    */
-  CHANGE_THRESHOLD: 0.10,
+  CHANGE_THRESHOLD: 0.08,
+
+  /**
+   * 换题检测阈值（0–1）。
+   * 当前帧与已识别帧的差异超过此值时，累计换题计数。
+   * 需要连续 QUESTION_CHANGED_REQUIRE_FRAMES 帧超过此值才判定换题。
+   * 值越小越敏感，越大越宽松。
+   * 推荐 0.15（避免角度变化误判）。
+   */
+  QUESTION_CHANGED_THRESHOLD: 0.15,
+
+  /**
+   * 换题判定需要的连续帧数。
+   * 防止单帧抖动导致误判换题。
+   * 推荐 2（400ms 确认时间）。
+   */
+  QUESTION_CHANGED_REQUIRE_FRAMES: 2,
 
   /** 两次识别之间的冷却时间（毫秒），防止快速连续触发。 */
   COOLDOWN_TIME: 2000,

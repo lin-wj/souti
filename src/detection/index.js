@@ -6,13 +6,14 @@
  *
  * 触发条件：
  *   1. 检测到有效内容（方差 > 阈值）
- *   2. 连续 N 帧相似（变化 < 阈值）
+ *   2. 连续 N 帧相似（变化 < CHANGE_THRESHOLD）
  *   3. 冷却时间已过（防止重复识别同一题）
  *   4. 不在处理中状态
  *
  * 防重复机制：
  *   - 使用 perceptual hash 比较当前帧与上一识别帧
- *   - hash 相似度 > 0.85 时跳过（同一道题轻微晃动）
+ *   - hash 相似度 > 0.90 时跳过（同一道题轻微晃动）
+ *   - 换题检测：连续 QUESTION_CHANGED_REQUIRE_FRAMES 帧 changeFromRecognized > QUESTION_CHANGED_THRESHOLD
  *   - 冷却时间 COOLDOWN_TIME 内不触发
  */
 
@@ -25,8 +26,8 @@ let lastFrameData = null;           // 上一帧像素数据（用于变化检�
 let lastFrameHash = null;           // 上一帧的 perceptual hash（用于去重）
 let lastRecognizedFrameData = null; // 上次成功识别时的帧数据（用于换题检测）
 let lastRecognizedHash = null;      // 上次成功识别的 hash（用于重复识别判断）
-let lastRecognizedTime = 0;         // 上次成功识别的时间（用于 changeFromRecognized 计算）
 let stableCount = 0;                // 当前连续相似帧计数
+let questionChangedCount = 0;       // 连续换题检测计数
 let lastChangeTime = 0;             // 上次检测到明显变化的时间戳
 let lastRecognitionTime = 0;        // 上次触发识别的时间戳（冷却计时）
 let frameCount = 0;                 // 总帧计数（调试用）
@@ -42,6 +43,7 @@ export const _lastRecognitionTime = { value: 0 };
 export const _lastRecognizedFrameData = { value: null };
 export const _changeFromRecognized = { value: 0 };
 export const _questionChanged = { value: false };
+export const _questionChangedCount = { value: 0 };
 
 // ── 回调 ─────────────────────────────────────────────────
 let onContent = null;
@@ -55,35 +57,51 @@ export function onDetectChange(fn) { onChange = fn; }
 export function onFrameProcessedCallback(fn) { onFrameProcessed = fn; }
 
 /**
- * 重置检测状态（识别成功后调用）。
- * 注意：不清除 lastFrameData，保持变化检测连续性。
- * 只清除 lastRecognizedFrameData，允许新题目触发识别。
+ * 重置稳定状态（识别成功后调用）。
+ * 注意：不清除 lastRecognizedHash，保持防重复能力。
  */
-export function resetDetection() {
-  // 不清除 lastFrameData — 保持与上一帧的变化检测连续性
-  // 不清除 lastFrameHash — 用于后续帧的重复判断
-  // 不清除 lastRecognizedHash — 防止同一道题重复识别
+export function resetStableState() {
   stableCount = 0;
-  lastRecognitionTime = Date.now();
-  // lastRecognizedFrameData 在换题时由 isReadyToCapture 清除
-  console.log('[Detection] resetDetection: stableCount reset, cooldown started');
+  questionChangedCount = 0;
+  console.log('[Detection] resetStableState: stable count reset');
 }
 
 /**
- * 标记当前帧已被识别，更新冷却时间和 hash。
- * 同时保存当前帧作为"已识别帧"，用于后续重复判断。
+ * 启动冷却时间。
+ * 无论识别成功还是失败，只要发起了 OCR 请求就启动冷却。
  */
-export function markRecognized(hash) {
-  // 只有成功 capture 后才设置已识别 hash
-  lastRecognizedHash = hash;
-  lastRecognizedFrameData = null; // 清除候选帧，等待新题目
+export function startCooldown() {
   lastRecognitionTime = Date.now();
-  lastRecognizedTime = Date.now(); // 记录识别时间用于 changeFromRecognized
+  console.log('[Detection] startCooldown: cooldown started');
+}
+
+/**
+ * 标记当前帧已被成功识别，更新冷却时间和 hash。
+ * 只有 OCR + Search 都成功时才调用。
+ */
+export function markRecognized(hash, frameData) {
+  lastRecognizedHash = hash;
+  lastRecognizedFrameData = frameData;
+  lastRecognitionTime = Date.now();
   _lastRecognizedHash.value = hash;
   _lastRecognitionTime.value = lastRecognitionTime;
   _changeFromRecognized.value = 0;
   _questionChanged.value = false;
+  _questionChangedCount.value = 0;
   console.log('[Detection] markRecognized: hash=', hash?.substring(0, 8), 'cooldownUntil=', lastRecognitionTime + config.COOLDOWN_TIME);
+}
+
+/**
+ * 清除已识别题目状态（换题时调用）。
+ */
+export function clearRecognizedQuestion() {
+  lastRecognizedHash = null;
+  lastRecognizedFrameData = null;
+  questionChangedCount = 0;
+  _lastRecognizedHash.value = null;
+  _questionChanged.value = false;
+  _questionChangedCount.value = 0;
+  console.log('[Detection] clearRecognizedQuestion: lock cleared');
 }
 
 /**
@@ -252,14 +270,14 @@ export function processFrame(video, rect) {
   _lastHasContent.value = content;
   if (onContent) onContent(content);
 
-  // ── 2. 帧差异检测 ──────────────────────────────────────
+  // ── 2. 帧差异检测（用于稳定判断）────────────────────────
   let change = 0;
   if (lastFrameData) {
     change = computeFrameDifference(lastFrameData, pixelData, width, height);
   }
   _lastChange.value = change;
 
-  // ── 3. 稳定计数逻辑（核心变更）─────────────────────────
+  // ── 3. 稳定计数逻辑 ────────────────────────────────────
   // 如果检测到内容且变化较小，增加稳定计数
   // 如果变化较大，重置稳定计数
   if (content) {
@@ -278,37 +296,47 @@ export function processFrame(video, rect) {
   }
   _stableCount.value = stableCount;
 
-  // 稳定指示器：当稳定计数接近目标时标记为稳定
+  // 稳定指示器
   const isStable = stableCount >= config.STABLE_FRAME_COUNT - 1;
   _lastIsStable.value = isStable;
   
-  // ── 换题检测：比较当前帧与已识别帧的差异 ──
+  // ── 4. 换题检测（连续 N 帧判定）────────────────────────
   let questionChanged = false;
-  if (lastRecognizedHash && lastRecognizedTime > 0) {
+  if (lastRecognizedHash && lastRecognizedFrameData) {
     // 计算当前帧与已识别帧的差异
-    const changeFromRecognized = computeFrameDifference(lastRecognizedFrameData, pixelData, width, height);
+    const changeFromRecognized = computeFrameDifference(
+      lastRecognizedFrameData, pixelData, width, height
+    );
     _changeFromRecognized.value = changeFromRecognized;
     
-    // 如果与已识别帧差异明显（> CHANGE_THRESHOLD），认为是新题目
-    if (changeFromRecognized > config.CHANGE_THRESHOLD) {
+    // 连续检测换题
+    if (changeFromRecognized > config.QUESTION_CHANGED_THRESHOLD) {
+      questionChangedCount++;
+    } else {
+      questionChangedCount = 0;
+    }
+    _questionChangedCount.value = questionChangedCount;
+    
+    // 连续 N 帧超过阈值，确认为换题
+    if (questionChangedCount >= config.QUESTION_CHANGED_REQUIRE_FRAMES) {
       questionChanged = true;
-      lastRecognizedHash = null;
-      lastRecognizedFrameData = null;
-      _questionChanged.value = true;
+      clearRecognizedQuestion();
       console.log('[Detection] question changed (changeFromRecognized=' + (changeFromRecognized * 100).toFixed(1) + '%)');
     }
   } else {
     _changeFromRecognized.value = 0;
     _questionChanged.value = false;
+    _questionChangedCount.value = 0;
   }
 
-  // ── 4. 通知回调 ────────────────────────────────────────
+  // ── 5. 通知回调 ────────────────────────────────────────
   if (onFrameProcessed) {
     onFrameProcessed({
       change,
       hasContent: content,
       isStable,
       stableCount,
+      questionChanged,
       fps: Math.round(1000 / config.FRAME_INTERVAL),
     });
   }
@@ -356,9 +384,7 @@ export function isReadyToCapture(video, rect) {
 
   // 条件 5：防重复（hash 相似度检查）
   // 只有当 lastRecognizedHash 存在且 question 未变化时才检查
-  // 第一次识别时 lastRecognizedHash = null，直接允许
-  // 换题后 questionChanged=true，lastRecognizedHash=null，也直接允许
-  if (lastRecognizedHash && !questionChanged) {
+  if (lastRecognizedHash) {
     const currentHash = computePerceptualHash(lastFrameData, rect.width, rect.height);
     if (currentHash) {
       const similarity = hashSimilarity(lastRecognizedHash, currentHash);
@@ -367,8 +393,7 @@ export function isReadyToCapture(video, rect) {
       }
       // 相似度低说明是新题目，清除锁定状态
       if (similarity < 0.7) {
-        lastRecognizedHash = null;
-        lastRecognizedFrameData = null;
+        clearRecognizedQuestion();
       }
     }
   }
@@ -436,8 +461,10 @@ export default {
   computeRect,
   isReadyToCapture,
   captureFrameForHash: captureFrame,
-  resetDetection,
+  resetStableState,
+  startCooldown,
   markRecognized,
+  clearRecognizedQuestion,
   onDetectContent,
   onDetectStable,
   onDetectChange,
@@ -447,4 +474,5 @@ export default {
   _lastRecognizedFrameData,
   _changeFromRecognized,
   _questionChanged,
+  _questionChangedCount,
 };

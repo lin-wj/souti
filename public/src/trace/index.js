@@ -73,7 +73,7 @@ export function inc(key) {
  * 更新扫描状态快照（供实时面板显示）。
  */
 export function showState(state) {
-  // state: { content, change, stable, ready, reason, similarity, cooldown }
+  // state: { content, change, stable, changeFromRecognized, questionChanged, questionChangedCount, ready, reason, similarity, cooldown }
   _scanState = { ..._scanState, ...state };
   if (_stateEl) {
     _stateEl.textContent = formatState(_scanState);
@@ -85,8 +85,17 @@ function formatState(s) {
   parts.push('Content: ' + (s.content ? 'YES' : 'NO'));
   parts.push('Stable: ' + s.stable);
   parts.push('Change: ' + (typeof s.change === 'number' ? (s.change * 100).toFixed(1) + '%' : s.change));
+  if (s.changeFromRecognized !== undefined && s.changeFromRecognized !== '-') {
+    parts.push('ChgRec: ' + (typeof s.changeFromRecognized === 'number' ? (s.changeFromRecognized * 100).toFixed(1) + '%' : s.changeFromRecognized));
+  }
+  if (s.questionChanged !== undefined) {
+    parts.push('QChanged: ' + (s.questionChanged ? 'YES' : 'NO'));
+  }
+  if (s.questionChangedCount !== undefined) {
+    parts.push('QCount: ' + s.questionChangedCount);
+  }
   parts.push('Ready: ' + (s.ready ? 'YES' : 'NO' + (s.reason ? ' (' + s.reason + ')' : '')));
-  if (s.similarity !== '-') parts.push('Sim: ' + s.similarity);
+  if (s.similarity !== '-' && s.similarity !== undefined) parts.push('Sim: ' + s.similarity);
   if (s.cooldown !== '-' && s.cooldown > 0) parts.push('CD: ' + Math.ceil(s.cooldown) + 'ms');
   return parts.join('  ');
 }
