@@ -36,7 +36,7 @@ let lastBlockedReason = null;
 
 export async function init() {
   console.log('[APP] init start');
-
+  
   if (new URLSearchParams(window.location.search).get('debug') === 'trace') {
     try {
       const traceMod = await import('./trace/index.js');
@@ -48,7 +48,7 @@ export async function init() {
       console.error('[APP] trace init failed:', e);
     }
   }
-
+  
   UI.init();
   console.log('[APP] UI.init() done, calling startCameraLoop()');
   await startCameraLoop();
@@ -128,7 +128,7 @@ function startDetectionLoop(videoEl) {
     }
     if (Trace) {
       Trace.inc('detection');
-      Trace.trace('SCAN', 'tick running=', running, 'state=', getState(),
+      Trace.trace('SCAN', 'tick running=', running, 'state=', getState(), 
                   'videoW=', Camera.getVideoDimensions()?.width ?? 0,
                   'rect=', Detection.computeRect(Camera.getVideoDimensions(), {width: 390, height: 844})?.width ?? '?');
     }
@@ -151,15 +151,13 @@ function startDetectionLoop(videoEl) {
         const prevContent = Detection['_lastHasContent'].value;
         const prevStableCount = Detection['_stableCount'].value;
 
-        // 注意：这里不能在 reason 声明前读取 reason，否则每个 tick 都会触发
-        // ReferenceError，导致 Detection 永远无法执行。
         Detection.processFrame(videoEl, rect);
         const readyResult = Detection.isReadyToCapture(videoEl, rect);
         const ready = readyResult.ready;
         const reason = readyResult.reason;
         const similarity = readyResult.similarity;
         const cooldownRemaining = readyResult.remaining;
-
+        
         const curContent = Detection['_lastHasContent'].value;
         const curChange = Detection['_lastChange'].value;
         const curStableCount = Detection['_stableCount'].value;
@@ -174,11 +172,10 @@ function startDetectionLoop(videoEl) {
             change: curChange,
             stable: `${curStableCount}/${config.STABLE_FRAME_COUNT}`,
             changeFromRecognized: Detection['_changeFromRecognized']?.value ?? 0,
-            questionChanged: Detection['_questionChanged']?.value ?? false,
-            questionChangedCount: Detection['_questionChangedCount']?.value ?? 0,
-            ready,
-            reason,
+            ready: ready,
+            reason: reason,
             similarity: similarity ?? '-',
+            questionChanged: Detection['_questionChanged']?.value ?? false,
             cooldown: cdRemaining,
           });
         }
@@ -189,23 +186,18 @@ function startDetectionLoop(videoEl) {
         const becameReady = ready && !reason;
 
         if (contentChanged || stableChanged || reasonChanged || becameReady) {
-          const parts = [
-            `state=${state}`,
-            `content=${curContent}`,
-            `change=${(curChange * 100).toFixed(1)}%`,
-            `stable=${curStableCount}/${config.STABLE_FRAME_COUNT}`,
-            `ready=${ready}`,
-          ];
+          const parts = [`state=${state}`, `content=${curContent}`, `change=${(curChange*100).toFixed(1)}%`, 
+                         `stable=${curStableCount}/${config.STABLE_FRAME_COUNT}`, `ready=${ready}`];
           if (reason) parts.push(`reason=${reason}`);
           if (similarity !== undefined && similarity !== null) parts.push(`sim=${similarity}`);
           if (cdRemaining > 0) parts.push(`cd=${Math.ceil(cdRemaining)}ms`);
           if (lastHash) parts.push(`hash=${lastHash.substring(0, 8)}`);
-
+          
           const logMsg = parts.join(' ');
           console.log(`[SCAN] ${logMsg}`);
           if (Trace) Trace.trace('SCAN', logMsg);
         }
-
+        
         lastBlockedReason = reason || null;
 
         if (ready) {
@@ -246,4 +238,181 @@ function stopDetectionLoop() {
   if (frameTimer) { clearTimeout(frameTimer); frameTimer = null; }
 }
 
-// ... rest of original app.js unchanged ...
+/**
+ * OCR 调试循环 — 不改变任何状态。
+ */
+function startOCRDetectionLoop(videoEl) {
+  stopOCRDetectionLoop();
+  const interval = 2000;
+
+  const loop = () => {
+    if (!running) {
+      if (Trace) Trace.trace('SCAN', 'loop tick SKIPPED: running=false');
+      return;
+    }
+    if (Trace) Trace.trace('SCAN', 'tick running=', running, 'state=', getState(), 'videoW=', Camera.getVideoDimensions()?.width ?? 0);
+    const state = getState();
+    if (state === State.CAMERA_READY || state === State.WAITING_FOR_CHANGE) {
+      const now = Date.now();
+      if (now - lastOCRTimer < interval) { ocrTimer = setTimeout(loop, interval); return; }
+      const videoSize = Camera.getVideoDimensions();
+      if (!videoSize) { ocrTimer = setTimeout(loop, interval); return; }
+      const displayEl = document.getElementById('video-container');
+      if (!displayEl) { ocrTimer = setTimeout(loop, interval); return; }
+      const displaySize = { width: displayEl.clientWidth, height: displayEl.clientHeight };
+      const rect = Detection.computeRect(videoSize, displaySize);
+      const frameData = Detection.captureFrameForHash(videoEl, rect);
+      if (frameData) {
+        lastOCRTimer = now;
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = rect.width;
+        tempCanvas.height = rect.height;
+        const ctx = tempCanvas.getContext('2d');
+        ctx.putImageData(new ImageData(frameData, rect.width, rect.height), 0, 0);
+        OCR.recognize(tempCanvas).then(result => {
+          UI.showOCRDebug(result);
+        }).catch(err => {
+          console.error('[App] OCR error:', err);
+          UI.showOCRDebug({ text: '', error: err.message });
+        });
+      }
+    }
+    ocrTimer = setTimeout(loop, interval);
+  };
+  ocrTimer = setTimeout(loop, interval);
+}
+
+function stopOCRDetectionLoop() {
+  if (ocrTimer) { clearTimeout(ocrTimer); ocrTimer = null; }
+}
+
+/**
+ * 触发截取和 AI 识别。
+ */
+async function triggerCapture(videoEl, rect) {
+  console.log('[CAPTURE] started, state:', getState(), 'rect:', JSON.stringify(rect));
+  if (Trace) Trace.trace('CAPTURE', 'started', 'state=', getState(), 'rect=', JSON.stringify(rect));
+  Trace?.inc('capture');
+  setState(State.CAPTURING, { source: 'triggerCapture' });
+  try {
+    const frameData = Detection.captureFrameForHash(videoEl, rect);
+    if (!frameData) {
+      console.warn('[CAPTURE] No frame data captured');
+      setState(State.NO_CONTENT, { source: 'triggerCapture' });
+      return;
+    }
+    console.log('[CAPTURE] frame captured:', frameData.length, 'bytes, rect:', rect.width, 'x', rect.height);
+
+    const captureCanvas = document.createElement('canvas');
+    captureCanvas.width = rect.width;
+    captureCanvas.height = rect.height;
+    const ctx = captureCanvas.getContext('2d');
+    ctx.putImageData(new ImageData(frameData, rect.width, rect.height), 0, 0);
+    console.log('[CAPTURE] canvas created:', captureCanvas.width, 'x', captureCanvas.height);
+
+    const preprocessed = preprocessCanvas(captureCanvas);
+    console.log('[OCR] starting recognition...');
+    const [origResult, preResult] = await Promise.all([
+      OCR.recognize(captureCanvas),
+      OCR.recognize(preprocessed),
+    ]);
+    console.log('[OCR] done. orig:', origResult.elapsed, 'ms conf=' + (origResult.confidence ?? 'null'), 'text:', JSON.stringify(origResult.text)?.substring(0, 60));
+    console.log('[OCR] pre:', preResult.elapsed, 'ms conf=' + (preResult.confidence ?? 'null'), 'text:', JSON.stringify(preResult.text)?.substring(0, 60));
+
+    const ocrText = (preResult.confidence ?? 0) > (origResult.confidence ?? 0)
+      ? preResult.text : origResult.text;
+    const ocrConfidence = (preResult.confidence ?? 0) > (origResult.confidence ?? 0)
+      ? preResult.confidence : origResult.confidence;
+
+    console.log(`[OCR] selected: "${ocrText?.substring(0, 40)}..." conf=${ocrConfidence?.toFixed(1)}%`);
+
+    if (!ocrText) {
+      console.warn('[CAPTURE] OCR returned empty text');
+      setState(State.NO_CONTENT, { source: 'triggerCapture' });
+      return;
+    }
+
+    console.log('[SEARCH] querying:', JSON.stringify(ocrText)?.substring(0, 80));
+    const searchResult = await Search.search(ocrText);
+    console.log('[SEARCH] result:', searchResult.matchType, 'confidence:', searchResult.confidence?.toFixed(3), searchResult.question ? 'FOUND: ' + searchResult.question.text.substring(0, 40) : 'NOT FOUND');
+
+    const hash = Detection.computePerceptualHash(frameData, rect.width, rect.height);
+    
+    if (searchResult.question) {
+      Detection.markRecognized(hash);
+      Detection.resetDetection();
+      
+      console.log('[UI] showing database result, type:', searchResult.matchType);
+      setState(State.SHOWING_RESULT, { source: 'triggerCapture' });
+      UI.showDatabaseResult({
+        question: searchResult.question,
+        matchType: searchResult.matchType,
+        confidence: searchResult.confidence,
+      });
+      setTimeout(() => {
+        console.log('[STATE] transitioning to WAITING_FOR_CHANGE');
+        setState(State.WAITING_FOR_CHANGE, { source: 'triggerCapture' });
+      }, 500);
+    } else {
+      console.log('[CAPTURE] 题库未匹配，暂不调用 AI 兜底');
+      setState(State.NO_CONTENT, { source: 'triggerCapture' });
+    }
+  } catch (err) {
+    console.error('[CAPTURE] error:', err.name, err.message);
+    console.error('[CAPTURE] stack:', err.stack);
+    if (err.name !== 'AbortError') {
+      setState(State.AI_ERROR, { error: err.message, source: 'triggerCapture.catch' });
+      UI.showResult({ success: false, error: err.message, error_code: 'ai_failed' });
+    }
+  }
+}
+
+function preprocessCanvas(src) {
+  try {
+    const upscaled = document.createElement('canvas');
+    upscaled.width = src.width * 2;
+    upscaled.height = src.height * 2;
+    const uctx = upscaled.getContext('2d');
+    uctx.imageSmoothingEnabled = true;
+    uctx.imageSmoothingQuality = 'high';
+    uctx.drawImage(src, 0, 0, upscaled.width, upscaled.height);
+
+    const enhanced = document.createElement('canvas');
+    enhanced.width = upscaled.width;
+    enhanced.height = upscaled.height;
+    const ectx = enhanced.getContext('2d', { willReadFrequently: true });
+    ectx.drawImage(upscaled, 0, 0);
+    const imageData = ectx.getImageData(0, 0, enhanced.width, enhanced.height);
+    const data = imageData.data;
+    const factor = (259 * (1.8 + 1)) / (259 - 1.8);
+    for (let i = 0; i < data.length; i += 4) {
+      const gray = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
+      const val = Math.min(255, Math.max(0, factor * (gray - 128) + 128 + 10));
+      data[i] = data[i+1] = data[i+2] = val;
+    }
+    ectx.putImageData(imageData, 0, 0);
+    return enhanced;
+  } catch (e) {
+    console.warn('[App] preprocessCanvas failed:', e);
+    return src;
+  }
+}
+
+export function destroy() {
+  running = false;
+  stopDetectionLoop();
+  stopOCRDetectionLoop();
+  if (abortController) {
+    abortController.abort();
+    abortController = null;
+  }
+  Camera.stopCamera();
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+    resizeObserver = null;
+  }
+  OCR.destroy();
+}
+
+export default { init, destroy };
+// debug=ocr deployed v4 - 1787128011
