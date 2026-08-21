@@ -1,0 +1,99 @@
+/** [BOOT] public/js/app.js loaded */
+console.log('[BOOT] public/js/app.js loaded');
+
+// 可见诊断：页面加载后显示状态
+let bootEl = null;
+function setBootStatus(text, color) {
+  if (!bootEl) {
+    bootEl = document.createElement('div');
+    bootEl.id = 'boot-diagnostic';
+    bootEl.style.cssText = 'position:fixed;top:0;left:0;z-index:9999;background:#0f0;color:#000;padding:4px 12px;font-size:14px;font-weight:bold;font-family:monospace;';
+    document.body.appendChild(bootEl);
+  }
+  bootEl.textContent = text;
+  bootEl.style.background = color || '#0f0';
+  console.log('[BOOT]', text);
+}
+setBootStatus('BOOT OK');
+
+import app from '../src/app.js';
+import ImportPanel from '../src/ui/import-panel.js';
+import Storage from '../src/db/storage.js';
+
+console.log('[BOOT] imports resolved');
+try {
+  ImportPanel.init();
+  setBootStatus('IMPORT OK', '#0af');
+} catch(e) {
+  setBootStatus('IMPORT ERR: ' + e.message, '#f80');
+  console.error('[BOOT] ImportPanel.init() failed:', e);
+}
+
+const debugBtn = document.getElementById('debug-trigger');
+if (debugBtn) {
+  debugBtn.addEventListener('click', () => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('debug') === '1') {
+      params.delete('debug');
+    } else {
+      params.set('debug', '1');
+    }
+    window.location.search = params.toString();
+  });
+}
+
+// debug=scan 模式：运行摄像头但不启动 Detection/OCR
+const scanMode = new URLSearchParams(window.location.search).get('debug') === 'scan';
+if (scanMode) {
+  console.log('[BOOT] SCAN MODE — camera + scan-frame only');
+  // 手动触发摄像头（不经过完整 init）
+  import('../src/camera/index.js').then(Camera => {
+    setBootStatus('SCAN: Starting camera...', '#ff0');
+    Camera.default.startCamera().then(() => {
+      const stream = Camera.default.stream;
+      const videoEl = document.getElementById('video');
+      if (videoEl && stream) { videoEl.srcObject = stream; videoEl.play().catch(console.warn); }
+      setBootStatus('SCAN: Camera OK', '#0f0');
+    }).catch(err => {
+      setBootStatus('SCAN: Camera FAIL: ' + err.name, '#f00');
+      console.error('[BOOT] Scan mode camera error:', err);
+    });
+  }).catch(err => {
+    console.error('[BOOT] Scan mode import error:', err);
+  });
+} else {
+  console.log('[BOOT] calling app.init()');
+  setBootStatus('STARTING CAMERA...', '#ff0');
+  app.init().then(() => {
+    console.log('[BOOT] app.init() resolved');
+    setBootStatus('CAMERA READY', '#0f0');
+  }).catch(err => {
+    console.error('[BOOT] app.init() rejected:', err);
+    setBootStatus('INIT ERROR: ' + err.name, '#f00');
+  });
+}
+
+// 题库状态持久化通知（非 scan 模式）
+if (!scanMode) {
+  window.addEventListener('load', async () => {
+    try {
+      const count = await Storage.getQuestionCount();
+      if (count > 0) {
+        console.log(`[BOOT] 本地题库已加载: ${count} 道题`);
+      }
+    } catch(e) { console.error('[BOOT] 题库加载失败:', e); }
+  });
+}
+
+// 非 scan 模式：每秒更新状态显示
+if (!scanMode) {
+  setInterval(() => {
+    const stateEl = document.getElementById('state-display');
+    if (stateEl) {
+      const text = stateEl.textContent;
+      if (text && text !== 'INITIALIZING') {
+        setBootStatus('STATE: ' + text, '#0af');
+      }
+    }
+  }, 2000);
+}
